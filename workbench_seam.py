@@ -16,6 +16,7 @@ from candidate_display import confirmed_candidates_from_selection
 from confirmation_builder import build_confirmation_from_selections
 from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry
 from module2_assembly import RoofAssemblyResult, assemble_full_roof_scope
+from roof_systems import roof_system_keys, validate_roof_system_selection   # FRAME v104a: the per-facet system contract
 
 
 XML_TEXT_KEYS = ("xml_text", "_xml_text", "eagleview_xml", "source_xml")
@@ -87,6 +88,13 @@ def build_scope_from_ui_selection(geom: EagleViewGeometry | str, ui_selection: M
     shake_measurements = selection.get("shake_measurements") or selection.get("shakeMeasurements") or selection.get("shake_profile")
     if shake_measurements:
         confirmed_selection = {**dict(confirmed_selection), "shake_measurements": shake_measurements}
+    # FRAME v104a: the claim's roof system — predominant_system_id + facet_systems (exceptions only) — rides onto the
+    # confirmed selection exactly as given, and is validated against THIS roof's facets. NOTHING READS IT TO DECIDE
+    # SCOPE (v104b dispatches on it). A selection declaring neither key is untouched, so every claim renders as before.
+    _systems = roof_system_keys(selection)
+    if _systems:
+        validate_roof_system_selection(_systems, parsed_geom.roof_faces)
+        confirmed_selection = {**dict(confirmed_selection), **_systems}
     return assemble_full_roof_scope(xml_text, confirmed_selection)
 
 
@@ -302,6 +310,8 @@ def _ui_selection_from_confirmed_selection(confirmed: Mapping[str, Any], *, xml_
             "member_face_ids": [str(v) for v in r.get("member_face_ids", ())],
         })
 
+    # FRAME v104a: the claim's roof system survives the reverse conversion too (absent stays absent).
+    out.update(roof_system_keys(confirmed))
     return out
 
 

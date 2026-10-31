@@ -24,12 +24,26 @@ its packages explicitly (Joseph 2026-10-26):
      claimant raises at register().
   2. REGISTRATION BY IMPORT. A package registers when something imports it. An entry point that reaches
      core geometry without importing any package gets the actionable error below, not a KeyError.
+
+FRAME v104a — WHICH ROOF SYSTEM DOES A FACET CARRY? (the per-facet contract; the first of three mixed-roof builds)
+    system_for_facet(face_id, confirmed_selection)   -> system_id   one authority
+    validate_roof_system_selection(sel, roof_face_ids)              raises on a bad declaration; a no-op when absent
+    roof_system_keys(selection)                       -> dict        the two keys, exactly as given, for carrying
+Joseph, 2026-10-30: one predominant system per claim, plus a map of exceptions. confirmed_selection carries
+`predominant_system_id` and `facet_systems` ({face_id: system_id}, EXCEPTIONS ONLY: a facet absent from it carries
+the predominant). A map, not a field on facet rows, because a repair facet has no row. NOTHING READS THIS TO DECIDE
+SCOPE YET (v104b dispatches on it); with one package registered every claim renders byte-identically.
+  BRIDGE 4 MEMBER (new in v104a): a claim that declares neither key resolves to THE SOLE registered roof system, and
+  zero or two-plus registered RAISES (RegistryWiringError, as field_category_id() does). Retires when every claim
+  declares predominant_system_id.
 """
 from __future__ import annotations
 
 from collections import namedtuple
 from collections.abc import Mapping
 from types import MappingProxyType
+
+from shared_category_registry import RegistryWiringError   # FRAME v104a: the bridge-4 wiring error, one type
 
 PROPAGATE_TO_RIDGE = "PROPAGATE_TO_RIDGE"     # the zone is shadow-filled up-slope to the top of its field run
 BOUNDED = "BOUNDED"                           # the zone is exactly the mask, clipped to the field
@@ -131,3 +145,94 @@ def system_for_profile(profile):
             f"(registered: {list(registered())}). Core does not assume a roof system. Fix: give the profile "
             f"a system_id.")
     return _SYSTEMS[_UNLABELLED_CLAIMANT]
+
+
+# =============================================================================================
+# FRAME v104a — the per-facet roof-system contract. See the module docstring. Tier 1: names no roof system.
+# =============================================================================================
+PREDOMINANT_SYSTEM_KEY = "predominant_system_id"
+FACET_SYSTEMS_KEY = "facet_systems"
+
+
+def _facet_exceptions(confirmed_selection):
+    """The exceptions map. Absent, None and {} are all "no exceptions"; anything that is not a mapping raises."""
+    raw = (confirmed_selection or {}).get(FACET_SYSTEMS_KEY)
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"FRAME: {FACET_SYSTEMS_KEY} must be a mapping {{face_id: system_id}} (exceptions only); "
+                        f"got {type(raw).__name__}")
+    return {str(k): v for k, v in raw.items()}
+
+
+def _require_registered_system(system_id, where):
+    if system_id in _SYSTEMS:
+        return system_id
+    raise RegistryWiringError(
+        f"FRAME: {where} names roof system {system_id!r}, which no package has registered (registered: "
+        f"{list(registered())}). Fix: import that system's package module, or correct {where}.")
+
+
+def system_for_facet(face_id, confirmed_selection):
+    """The roof system a facet carries. ONE authority, three steps:
+      1. an entry for the facet in `facet_systems` wins;
+      2. otherwise the claim's `predominant_system_id`;
+      3. otherwise — the claim declares neither — THE SOLE registered roof system. Zero, or two or more, RAISES:
+         core never picks a system. This step is a BRIDGE 4 member (see the module docstring).
+    A named system that no package registered raises. An exception naming the predominant system is a no-op."""
+    sel = confirmed_selection or {}
+    sid = _facet_exceptions(sel).get(str(face_id))
+    if sid not in (None, ""):
+        return _require_registered_system(sid, f"{FACET_SYSTEMS_KEY}[{str(face_id)!r}]")
+    pre = sel.get(PREDOMINANT_SYSTEM_KEY)
+    if pre not in (None, ""):
+        return _require_registered_system(pre, PREDOMINANT_SYSTEM_KEY)
+    pk = registered()
+    if not pk:
+        raise RegistryWiringError(
+            f"FRAME wiring: system_for_facet({str(face_id)!r}) — the claim declares no {PREDOMINANT_SYSTEM_KEY} and no "
+            f"roof-system package has registered, so there is no answer. This is missing wiring, not a data problem. "
+            f"Fix: declare {PREDOMINANT_SYSTEM_KEY} on the claim, and import the installed package (the bridge's "
+            f"shared boot helper does this for every page).")
+    if len(pk) > 1:
+        raise RegistryWiringError(
+            f"FRAME bridge 4: system_for_facet({str(face_id)!r}) — the claim declares no {PREDOMINANT_SYSTEM_KEY}, and "
+            f"{len(pk)} roof-system packages are registered ({list(pk)}), so core will not pick one. Fix: declare "
+            f"{PREDOMINANT_SYSTEM_KEY} on the claim (and {FACET_SYSTEMS_KEY} for any facet that differs).")
+    return pk[0]
+
+
+def validate_roof_system_selection(confirmed_selection, roof_face_ids):
+    """Raise, actionably, on a bad declaration; return None when it is sound. A selection declaring neither key is
+    not inspected at all (every pre-v104a claim). `roof_face_ids` are this roof's facets (ROOF faces, not
+    penetrations): an exception keyed by anything else raises."""
+    sel = confirmed_selection or {}
+    if PREDOMINANT_SYSTEM_KEY not in sel and FACET_SYSTEMS_KEY not in sel:
+        return None
+    pre = sel.get(PREDOMINANT_SYSTEM_KEY)
+    if pre not in (None, ""):
+        if not isinstance(pre, str):
+            raise TypeError(f"FRAME: {PREDOMINANT_SYSTEM_KEY} must be a system id string; got {type(pre).__name__}")
+        _require_registered_system(pre, PREDOMINANT_SYSTEM_KEY)
+    faces = {str(f) for f in roof_face_ids}
+    for fid, sid in sorted(_facet_exceptions(sel).items()):
+        if fid not in faces:
+            raise ValueError(
+                f"FRAME: {FACET_SYSTEMS_KEY} names {fid!r}, which is not a roof facet of this roof (its facets: "
+                f"{sorted(faces, key=lambda v: (len(v), v))}). Fix: key {FACET_SYSTEMS_KEY} by this roof's face ids.")
+        if not isinstance(sid, str) or not sid.strip():
+            raise ValueError(f"FRAME: {FACET_SYSTEMS_KEY}[{fid!r}] must name a roof system; got {sid!r}")
+        _require_registered_system(sid, f"{FACET_SYSTEMS_KEY}[{fid!r}]")
+    return None
+
+
+def roof_system_keys(selection):
+    """The two keys exactly as the selection gives them (a dict map is copied), for the code that CARRIES a selection
+    from one shape to another. Absent keys stay absent: a claim that declares nothing changes shape nowhere."""
+    sel = selection or {}
+    out = {}
+    for key in (PREDOMINANT_SYSTEM_KEY, FACET_SYSTEMS_KEY):
+        if key in sel:
+            v = sel[key]
+            out[key] = dict(v) if isinstance(v, Mapping) else v
+    return out

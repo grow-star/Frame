@@ -39,6 +39,7 @@ from module2_assembly import _replacement_facet_area, encoding_b_zone, _encoding
                                                        # diagram total can never disagree with the scope.
 from module2_scope_expansion import _shake_count
 from workbench_seam import XML_TEXT_KEYS, _selection_for_candidate_display
+from roof_systems import roof_system_keys, validate_roof_system_selection   # FRAME v104a: the per-facet system contract
 
 
 _REQUIRED_CONFIRMED_KEYS = {
@@ -143,6 +144,11 @@ def _resolve_geometry_and_xml(geom_or_xml: EagleViewGeometry | str, selection: M
 
 
 def _confirmed_selection_from_ui(geom: EagleViewGeometry, selection: Mapping[str, Any]) -> Mapping[str, Any]:
+    # FRAME v104a: the claim's roof system is validated against this roof's facets on BOTH shapes, and (below) rides
+    # onto the converted selection exactly as given — carried to module1_service, read by nothing yet (v104b).
+    _systems = roof_system_keys(selection)
+    if _systems:
+        validate_roof_system_selection(_systems, geom.roof_faces)
     if _REQUIRED_CONFIRMED_KEYS.issubset(selection.keys()):
         return selection
     engine_selection = _selection_for_candidate_display(selection)
@@ -168,6 +174,8 @@ def _confirmed_selection_from_ui(geom: EagleViewGeometry, selection: Mapping[str
                      for r in (selection.get("replaced_facets", ()) or ())]
     if replaced_rows:
         confirmed = {**dict(confirmed), "replaced_facets": replaced_rows}
+    if _systems:
+        confirmed = {**dict(confirmed), **_systems}
     return confirmed
 
 
