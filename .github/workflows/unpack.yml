@@ -1,0 +1,57 @@
+name: Unpack deploy
+
+on:
+  push:
+    paths:
+      - 'deploy.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Expand deploy.zip into the repo root
+        run: |
+          set -e
+          test -f deploy.zip || { echo "no deploy.zip at the repo root"; exit 1; }
+          rm -rf core roof_systems
+          mkdir _unpack
+          unzip -q -o deploy.zip -d _unpack
+          if [ -d _unpack/deploy ]; then
+            cp -R _unpack/deploy/. .
+          else
+            cp -R _unpack/. .
+          fi
+          rm -rf _unpack deploy.zip
+          echo "root files:    $(find . -maxdepth 1 -type f | wc -l)"
+          echo "core/:         $(find core -type f 2>/dev/null | wc -l)"
+          echo "roof_systems/: $(find roof_systems -type f 2>/dev/null | wc -l)"
+
+      - name: Sanity-check the engine file list
+        run: |
+          set -e
+          test -f index.html || { echo "index.html missing"; exit 1; }
+          test -f pyodide_bridge.js || { echo "pyodide_bridge.js missing"; exit 1; }
+          missing=0
+          for f in $(grep -o '"[^"]*\.py"' pyodide_bridge.js | tr -d '"' | sort -u); do
+            if [ ! -f "$f" ]; then echo "MISSING: $f"; missing=1; fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Engine files are missing - the page would load but not compute."
+            exit 1
+          fi
+          echo "All engine files present."
+
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet && { echo "nothing changed"; exit 0; }
+          git commit -m "Unpack deploy.zip"
+          git push
