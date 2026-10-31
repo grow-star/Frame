@@ -174,6 +174,15 @@ def _confirmed_selection_from_ui(geom: EagleViewGeometry, selection: Mapping[str
                      for r in (selection.get("replaced_facets", ()) or ())]
     if replaced_rows:
         confirmed = {**dict(confirmed), "replaced_facets": replaced_rows}
+    # FRAME v104a.1 (K8): the job's MEASURED shake profile was SILENTLY DROPPED here — the third carry this
+    # conversion was missing (transitions v55, replaced facets v62, now this). workbench_seam carries it, so the
+    # SCOPE was right; this did not, so every DIAGRAM built from a UI selection fell back to 7 x 10in in
+    # _event_regions, and the report's "% of roof" (and the diagram's SF / EA) were wrong on any job measured
+    # otherwise. Same three aliases, same order, same guard as workbench_seam: only set when one is present, so a
+    # selection with no profile converts exactly as before and _event_regions' fallback is untouched.
+    shake_measurements = selection.get("shake_measurements") or selection.get("shakeMeasurements") or selection.get("shake_profile")
+    if shake_measurements:
+        confirmed = {**dict(confirmed), "shake_measurements": shake_measurements}
     if _systems:
         confirmed = {**dict(confirmed), **_systems}
     return confirmed

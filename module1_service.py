@@ -193,6 +193,7 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
             [geom.valley_event_for_face(face_id, valley_id)],
             penetrations=penetrations,
             return_zone=True,
+            shake_measurements=_shake_measurements_from_selection(confirmed_selection),
         )
         components.append(Module1ComponentResult(
             label=str(row.get("label", f"{face_id}:{valley_id}")),
@@ -220,6 +221,7 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
             [geom.valley_event_for_face(face_id, valley_id) for valley_id in valley_ids],
             penetrations=_penetrations_with_user_footprints(geom, confirmed_selection, face_id),  # XML + confirmed user dimensioned footprint holes
             return_zone=True,
+            shake_measurements=_shake_measurements_from_selection(confirmed_selection),
         )
         components.append(Module1ComponentResult(
             label=str(row.get("label", f"{face_id}:multi-valley")),
@@ -420,7 +422,8 @@ def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candid
             valley_ids = tuple(str(v) for v in row.get("valley_ids", notch_candidate.params["bordering_valley_line_ids"]))
             valley_events = [_valley_event_for_notch(geom, notch_candidate, frame, facet, valley_id) for valley_id in valley_ids]
             _per_r, _area_r, z_r, _gx, _gy = affected_area(
-                facet, valley_events, notches=notches, penetrations=holes, return_zone=True
+                facet, valley_events, notches=notches, penetrations=holes, return_zone=True,
+                shake_measurements=shake_measurements
             )
             repair_masks.append(np.asarray(z_r, bool))
     if not repair_masks:
@@ -672,7 +675,7 @@ def _derived_notch_union_area(geom: EagleViewGeometry, candidate: Candidate, con
             if _pf is not None and getattr(_pf, "size", 0) > 0:
                 _notch_pens.append([tuple(frame(geom.points[pid])) for pid in geom.ordered_face_point_ids(_cid)])
     _notch_pens.extend(_user_footprints_for_merged_members(geom, confirmed_selection or {}, candidate.params["member_face_ids"], frame))
-    _per_event, area, _zone, _gx, _gy = affected_area(facet, valleys, notches=notches, penetrations=_dimensional_pens(_notch_pens), return_zone=True)
+    _per_event, area, _zone, _gx, _gy = affected_area(facet, valleys, notches=notches, penetrations=_dimensional_pens(_notch_pens), return_zone=True, shake_measurements=_shake_measurements_from_selection(confirmed_selection or {}))
     return float(area), _zone, _gx, _gy
 
 

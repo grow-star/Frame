@@ -1213,7 +1213,8 @@ def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candid
             valley_ids = tuple(str(v) for v in row.get("valley_ids", notch_candidate.params["bordering_valley_line_ids"]))
             valley_events = [_valley_event_for_notch(geom, notch_candidate, frame, facet, valley_id) for valley_id in valley_ids]
             _per_r, _area_r, z_r, _gx, _gy = affected_area(
-                facet, valley_events, notches=notches, penetrations=holes, return_zone=True
+                facet, valley_events, notches=notches, penetrations=holes, return_zone=True,
+                shake_measurements=shake_measurements
             )
             repair_masks.append(np.asarray(z_r, bool))
     if not repair_masks:
