@@ -4,7 +4,7 @@ core/registry/roof_systems.py — the roof-system registry (FRAME v95 / Migratio
 Shared core NEVER imports a roof-system package. A package imports THIS module and registers itself at import
 time; core looks the package up by the profile's `system_id`. The dependency points one way: package -> core.
 
-    register(system_id, resolve_profile=..., disturbance={...}, claims_unlabelled_profiles=False)
+    register(system_id, resolve_profile=..., disturbance={...}, expand_scope=..., claims_unlabelled_profiles=False)
     get(system_id)               -> RoofSystem          RAISES on an unknown id
     system_for_profile(profile)  -> RoofSystem          RAISES when it cannot be decided — never guesses
 
@@ -54,7 +54,10 @@ EVENT_TYPES = frozenset(("VALLEY", "TRANSITION", "APPURTENANCE", "PENETRATION", 
 # What core hands a disturbance strategy: the facet grid, read-only by contract (Package Contract §1.1).
 FacetGrid = namedtuple("FacetGrid", "gx gy X Y")
 
-RoofSystem = namedtuple("RoofSystem", "system_id resolve_profile disturbance claims_unlabelled_profiles")
+# FRAME v104b: `expand_scope` — the package's scope engine — is a REQUIRED registration field. The engine is ASKED FOR
+# (get(system_id).expand_scope), never imported by name: that retires bridge 6 ("the scope engine is called, not
+# dispatched"). With one package registered, dispatch resolves to the very same function the imports reached.
+RoofSystem = namedtuple("RoofSystem", "system_id resolve_profile disturbance claims_unlabelled_profiles expand_scope")
 
 
 class RoofSystemRegistryError(LookupError):
@@ -66,7 +69,7 @@ _SYSTEMS: "dict[str, RoofSystem]" = {}
 _UNLABELLED_CLAIMANT = None
 
 
-def register(system_id, *, resolve_profile, disturbance, claims_unlabelled_profiles=False):
+def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_unlabelled_profiles=False):
     """Called BY a package, at its own import. Idempotent for an identical registration. A second, DIFFERENT
     registration of one id raises (one rule, one home), as does a second claimant of unlabelled profiles."""
     global _UNLABELLED_CLAIMANT
@@ -74,6 +77,8 @@ def register(system_id, *, resolve_profile, disturbance, claims_unlabelled_profi
         raise ValueError(f"system_id must be a non-empty string; got {system_id!r}")
     if not callable(resolve_profile):
         raise TypeError(f"{system_id}: resolve_profile must be callable")
+    if not callable(expand_scope):
+        raise TypeError(f"{system_id}: expand_scope must be callable (the package's scope engine — FRAME v104b)")
     if not isinstance(disturbance, Mapping) or not disturbance:
         raise TypeError(f"{system_id}: disturbance must be a non-empty mapping of event type -> strategy")
     unknown = sorted(set(disturbance) - EVENT_TYPES)
@@ -83,12 +88,13 @@ def register(system_id, *, resolve_profile, disturbance, claims_unlabelled_profi
         if not callable(fn):
             raise TypeError(f"{system_id}: disturbance[{ev!r}] must be callable")
     entry = RoofSystem(system_id, resolve_profile, MappingProxyType(dict(disturbance)),
-                       bool(claims_unlabelled_profiles))
+                       bool(claims_unlabelled_profiles), expand_scope)
     existing = _SYSTEMS.get(system_id)
     if existing is not None:
         if (existing.resolve_profile is entry.resolve_profile
                 and dict(existing.disturbance) == dict(entry.disturbance)
-                and existing.claims_unlabelled_profiles == entry.claims_unlabelled_profiles):
+                and existing.claims_unlabelled_profiles == entry.claims_unlabelled_profiles
+                and existing.expand_scope is entry.expand_scope):
             return existing
         raise RoofSystemRegistryError(
             f"roof system {system_id!r} is already registered with different strategies — two homes for one "
@@ -187,18 +193,26 @@ def system_for_facet(face_id, confirmed_selection):
     pre = sel.get(PREDOMINANT_SYSTEM_KEY)
     if pre not in (None, ""):
         return _require_registered_system(pre, PREDOMINANT_SYSTEM_KEY)
+    return sole_registered_system(f"system_for_facet({str(face_id)!r})")
+
+
+def sole_registered_system(context="a scope call with no facet in hand"):
+    """THE SOLE registered roof system — system_for_facet's third step, named so that a caller with NO face id in hand
+    (FRAME v104b: a per-edge or per-transition scope call, the oracle's fixture) resolves by the SAME rule rather than
+    a third path. Zero, or two or more, RAISES RegistryWiringError: core never picks a system. A BRIDGE 4 member;
+    v104c routes these calls per facet."""
     pk = registered()
     if not pk:
         raise RegistryWiringError(
-            f"FRAME wiring: system_for_facet({str(face_id)!r}) — the claim declares no {PREDOMINANT_SYSTEM_KEY} and no "
-            f"roof-system package has registered, so there is no answer. This is missing wiring, not a data problem. "
-            f"Fix: declare {PREDOMINANT_SYSTEM_KEY} on the claim, and import the installed package (the bridge's "
-            f"shared boot helper does this for every page).")
+            f"FRAME wiring: {context} — the claim declares no {PREDOMINANT_SYSTEM_KEY} and no roof-system package has "
+            f"registered, so there is no answer. This is missing wiring, not a data problem. Fix: declare "
+            f"{PREDOMINANT_SYSTEM_KEY} on the claim, and import the installed package's geometry module (every engine "
+            f"module does).")
     if len(pk) > 1:
         raise RegistryWiringError(
-            f"FRAME bridge 4: system_for_facet({str(face_id)!r}) — the claim declares no {PREDOMINANT_SYSTEM_KEY}, and "
-            f"{len(pk)} roof-system packages are registered ({list(pk)}), so core will not pick one. Fix: declare "
-            f"{PREDOMINANT_SYSTEM_KEY} on the claim (and {FACET_SYSTEMS_KEY} for any facet that differs).")
+            f"FRAME bridge 4: {context} — {len(pk)} roof-system packages are registered ({list(pk)}), so core will not "
+            f"pick one. Fix: declare {PREDOMINANT_SYSTEM_KEY} on the claim (and {FACET_SYSTEMS_KEY} for any facet that "
+            f"differs); a call with no facet in hand is routed per facet by v104c.")
     return pk[0]
 
 

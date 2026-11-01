@@ -237,40 +237,124 @@ assert registry_fingerprint(CORE_REGISTRY) == CORE_REGISTRY_HASH, "core registry
 
 
 # =============================================================================================
-# FRAME v98 — "WHICH CATEGORY IS THE FIELD COVERING?" (A2 group A; v98 prompt C-1, C-2, C-3)
+# FRAME v104c — "WHICH CATEGORY IS THE FIELD COVERING?" is asked PER SYSTEM (bridge 4 narrowed)
 # =============================================================================================
-# Core asks; the registered package answers. Resolved from the field id the package DECLARED when it registered
-# (register_package_categories(field_category=...), QA v98 call 1) — at CALL time, never at import. Zero arguments (C-2): no call site has a system to pass, and
-# an optional one would be the default-shaped shortcut this build removes.
+# v98 answered it once per claim, from the ONE registered package (bridge 4). A mixed roof has no single answer, so
+# the question now names its system: field_category_id(system_id) reads the field id that package DECLARED when it
+# registered (register_package_categories(field_category=...)). THE NO-ARGUMENT FORM IS GONE — a call that cannot say
+# which system it means was the defect.
 #
-# BRIDGE 4: with ONE package registered the answer is unambiguous; with zero there is none, and with two core
-# MUST NOT PICK — both RAISE (C-3, the v97 precedent). Retires at the ScopeLine enrichment carrying
-# material_profile_id (A1 §5, Roadmap §6), when a line states its own system — NOT at Migration Plan step 4
-# with bridges 1-3.
-def field_category_id():
-    """The category id of the field covering, as DECLARED by the ONE registered roof-system package. RAISES
-    (RegistryWiringError, actionable, never a default) on zero packages, on two or more, and when the one package
-    declared no field category. It never infers the answer from how many ids a package owns (asphalt will own a
-    field id AND DOUBLE_STARTER)."""
+# Where the system comes from:
+#   * a LINE in hand -> its own material, ScopeLine.material_profile_id (set by the engine that made it): line_system();
+#   * NO line in hand (a carrier row, a category-keyed map, a serialized report line, a bare category id) ->
+#     sole_category_package(), the CATEGORY registry's sole package. BRIDGE 4, NARROWED, NOT RETIRED: those sites are
+#     an explicit, listed set (FRAME_v104c_Results.md), and with two packages each raises rather than pick.
+# Why the CATEGORY registry and not roof_systems.sole_registered_system(): page 3 boots with the category module only
+# and never loads the engine or the geometry, so the roof-system registry is EMPTY there (pinned in v104b). A resolver
+# reading it would raise on every carrier row a user entered (FRAME v104c Q3).
+def field_category_id(system_id):
+    """The category id of `system_id`'s field covering, as that package DECLARED it. RAISES (RegistryWiringError,
+    actionable, never a default) on an unregistered system, naming the registered ones, and when the package declared
+    no field category. It never infers the answer from how many ids a package owns."""
+    if system_id not in _PACKAGE_OWNED:
+        raise RegistryWiringError(
+            f"FRAME wiring: field_category_id({system_id!r}) — no roof-system package by that id has registered its "
+            f"category ids (registered: {list(registered_packages())}). Fix: import that package's category module, or "
+            f"pass the system the line actually belongs to (ScopeLine.material_profile_id).")
+    if system_id not in _PACKAGE_FIELD:
+        raise RegistryWiringError(
+            f"FRAME wiring: package {system_id!r} registered its category ids but declared no field category, so the "
+            f"registry cannot say which is its field covering. Fix: pass field_category=<its field id> to "
+            f"register_package_categories in its category module (Package Contract §1 item 6).")
+    return _PACKAGE_FIELD[system_id]
+
+
+def sole_category_package(context="a call with no line in hand"):
+    """THE SOLE registered category package — for a site that holds no line and so cannot say which system it means.
+    BRIDGE 4 (narrowed): zero, or two or more, RAISES; core never picks. Reads THIS registry, which the bridge's boot
+    helper fills on every page, page 3 included."""
     pk = registered_packages()
     if not pk:
         raise RegistryWiringError(
-            "FRAME wiring: field_category_id() was asked which category is the field covering, but no "
-            "roof-system package has registered, so there is no answer. This is missing wiring, not a data "
-            "problem. Fix: import the installed package's category module (the bridge's shared boot helper does "
-            "this for every page) before computing scope, keying, comparisons or reports.")
+            f"FRAME wiring: {context} — no roof-system package has registered its category ids, so there is no "
+            f"answer. This is missing wiring, not a data problem. Fix: import the installed package's category module "
+            f"(the bridge's shared boot helper does this for every page).")
     if len(pk) > 1:
         raise RegistryWiringError(
-            f"FRAME bridge 4: {len(pk)} roof-system packages are registered ({list(pk)}), so 'which category is "
-            f"the field covering?' has more than one answer and core will not pick one. This is the hard gate on "
-            f"a second roofing package, not a data problem. Fix: take the field id from the line's own system "
-            f"(ScopeLine.material_profile_id — bridge 4's retirement), not from this claim-level lookup.")
-    if pk[0] not in _PACKAGE_FIELD:
+            f"FRAME bridge 4: {context} — {len(pk)} roof-system packages are registered ({list(pk)}) and this site has "
+            f"no line to say which one it means, so core will not pick. This is the narrowed bridge 4: give the site a "
+            f"line (ScopeLine.material_profile_id) or a system id.")
+    return pk[0]
+
+
+def line_system(line, context="a line with no material"):
+    """The roof system a line belongs to: its own material_profile_id (a ScopeLine, an AggregatedScopeLine or its
+    serialized dict). A line that carries none — built outside an engine, or saved by an older version — falls back
+    like a line-less site (bridge 4, narrowed): with two packages it raises rather than pick."""
+    mat = line.get("material_profile_id") if isinstance(line, Mapping) else getattr(line, "material_profile_id", None)
+    return mat if mat not in (None, "") else sole_category_package(context)
+
+
+def field_category_ids():
+    """FRAME v104e: the set of EVERY registered system's declared field-covering id — "is this category a field
+    covering?" answered WITHOUT PICKING A PACKAGE. _PACKAGE_FIELD, read across. It never raises on two or more
+    packages (that is the point: bridge 4 retires at the sites that only ask this). With no package registered it
+    RAISES, like every registry read (missing wiring, never an empty answer), and so it does when a registered package
+    declared no field covering — the set would silently be incomplete (field_category_id raises there too)."""
+    _guard()
+    undeclared = sorted(sysid for sysid in _PACKAGE_OWNED if sysid not in _PACKAGE_FIELD)
+    if undeclared:
         raise RegistryWiringError(
-            f"FRAME wiring: package {pk[0]!r} registered its category ids but declared no field category, so the "
-            f"registry cannot say which is its field covering. Fix: pass field_category=<its field id> to "
-            f"register_package_categories in its category module (Package Contract §1 item 6).")
-    return _PACKAGE_FIELD[pk[0]]
+            f"FRAME wiring: field_category_ids() — package(s) {undeclared} registered their category ids but declared "
+            f"no field category, so the set of field coverings would be incomplete. Fix: pass field_category=<its "
+            f"field id> to register_package_categories in that package's category module (Package Contract §1 item 6).")
+    return frozenset(_PACKAGE_FIELD.values())
+
+
+def system_for_field_category(category_id):
+    """FRAME v104e: the system that DECLARES `category_id` as its field covering, or None when it is not a field
+    covering — "whose?", for the per-system figures. _PACKAGE_FIELD, inverted; one id belongs to at most one package
+    (ownership is exclusive), so this never picks and never raises on two or more packages. With no package
+    registered it RAISES, like every registry read."""
+    _guard()
+    return next((sysid for sysid, fid in _PACKAGE_FIELD.items() if fid == category_id), None)
+
+
+# FRAME v104c — MERGE OR SPLIT ACROSS ROOF SYSTEMS (Joseph, 2026-10-31; ledger entry 89). A property of the CATEGORY,
+# declared once, here, beside the ids. It decides only whether a line's MATERIAL joins the aggregation key; the item
+# text is ALWAYS in the key (v77: group by the user's label), and Joseph: "one line only if it's genuinely the same
+# product". So a MERGED category sums two systems' lines only when they name the same product; a SPLIT category keeps
+# two systems apart even when their text matches. A category a package OWNS always splits (two packages cannot own one
+# id). ANY SHARED ID WITHOUT A RULING SPLITS (QA v104c Q2): an unruled merge would silently sum two physical
+# materials; an unruled split only shows a line a user can combine — wrong in the recoverable direction. Declared
+# against the core ids directly — never by growing a package's USES (that moves its hash).
+#
+# FRAME v104d — JOSEPH'S RULINGS (ledger entry 93): every emitted unruled id MERGES, "merge like kind" — "IWS is the
+# same no matter what roof surface. Step flashing merge. ... Metals are metals. ... Ridge vent merge. Why? Ridge and
+# hip caps are different than ridge vent." The principle behind the whole table: material joins the key only for the
+# roof surface itself and the pieces CUT FROM IT (field, tear-off, starter, ridge/hip caps); a manufactured part that
+# sits on the roof (a vent, a flashing, a metal) is like kind across coverings. Labour is ruled as a kind
+# (ROOFER_LABOR named). FRAME v104e (ledger entry 98): DEBRIS_DISPOSAL, EQUIPMENT and FLUE_CAP are ruled MERGE too,
+# completing the table — inert today (no scope emitter reaches them, and carrier rows never enter _aggregate_lines).
+# THE DEFAULT STAYS SPLIT: material_splits reads the MERGED list, so a future core id defaults to split, never to a
+# silent sum of two physical materials.
+MATERIAL_MERGED_CATEGORIES = frozenset({
+    "APPURT_IWS", "BOX_VENT", "CHIMNEY_CHASE_COVER",
+    "CHIMNEY_FLASH", "DEBRIS_DISPOSAL", "DRIP_EDGE", "ENDWALL_FLASH",
+    "EQUIPMENT", "FIELD_FELT", "FLUE_CAP", "GABLE_CORNICE", "GENERAL_LABOR",
+    "HIGH_SLOPE_CHARGE", "IWS", "PIPE_JACK_FLASH",
+    "POWER_VENT", "RIDGE_VENT", "ROOFER_LABOR",
+    "SKYLIGHT_FLASH", "STEEP_CHARGE", "STEP_FLASH",
+    "TRANSITION_FLASH", "TURBINE_VENT", "UNMAPPED",
+    "VALLEY_METAL", "VENT_CAP",
+})
+MATERIAL_SPLIT_CATEGORIES = frozenset({"RIDGE_CAPS", "HIP_CAPS", "RIDGE_HIP_CAP", "STARTER", "FIELD_TEAROFF",
+                                       "FIELD_COVERING"})
+
+
+def material_splits(category_id):
+    """True when a line's material joins the aggregation key for `category_id` (two systems stay apart)."""
+    return category_id not in MATERIAL_MERGED_CATEGORIES
 
 
 # =============================================================================================

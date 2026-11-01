@@ -37,7 +37,9 @@ from candidate_emitters import (
 from candidate_model import Candidate
 from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry
 from module1_selected_valley_handoff import selected_valley_handoff
-from module2_scope_expansion import M1Interface, expand_scope
+from scope_contract import M1Interface   # FRAME v104b: the contract from core (the same object)
+# FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired) — v104a's resolvers, no third path.
+from roof_systems import get as roof_system, sole_registered_system, system_for_facet
 from notch_candidate_emitter import emit_notch_candidates
 
 
@@ -322,9 +324,11 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
 
     scope_lines = []
     for component in components:
-        scope_lines.extend(expand_scope(M1Interface(affected_SF=component.affected_SF_raw), repair_factor=1.0))
+        _sid = (system_for_facet(component.face_id, confirmed_selection) if component.face_id
+                else sole_registered_system("module1_service: a component with no facet"))
+        scope_lines.extend(roof_system(_sid).expand_scope(M1Interface(affected_SF=component.affected_SF_raw), repair_factor=1.0))
     if selected_lf > 0:
-        scope_lines.extend(expand_scope(M1Interface(affected_SF=0.0, valley_LF_in_scope=selected_lf), repair_factor=1.0))
+        scope_lines.extend(roof_system(sole_registered_system("module1_service: the selected-valley LF line")).expand_scope(M1Interface(affected_SF=0.0, valley_LF_in_scope=selected_lf), repair_factor=1.0))
 
     raw_total = sum(component.affected_SF_raw for component in components)
     display_total = round(sum(round(component.affected_SF_raw, 1) for component in components), 1)

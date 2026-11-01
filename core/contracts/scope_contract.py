@@ -90,6 +90,11 @@ class ScopeLine:
     gate: str               # AUTO | CONFIRM
     citation: str
     xact_code: Optional[str] = None
+    # FRAME v104c: the roof system whose ENGINE produced this line — set by that package's expand_scope, never by
+    # core (a line's material comes from the engine that made it). Optional with a None default, so every existing
+    # construction and every saved claim keeps working; a line built outside an engine (the assembly's eave-IWS and
+    # ridge-vent lines) carries None and falls back like a line-less site (shared_category_registry.line_system).
+    material_profile_id: Optional[str] = None
 
     def key(self):
         return (self.category_id, round(self.qty, 2), self.unit, self.gate)

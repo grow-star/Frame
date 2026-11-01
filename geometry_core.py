@@ -186,7 +186,8 @@ def _grid_cache_key(facet,pens,nots,res,prof):
             tuple(_poly_key(h) for h in (pens or [])),
             tuple(_poly_key(h) for h in (nots or [])),
             float(res),
-            float(prof["width_in"]), float(prof["exposure_in"]))
+            float(prof["width_in"]), float(prof["exposure_in"]),
+            str(prof["system_id"]))      # FRAME v104b (K9): two systems at the same dimensions are different grids
 
 def clear_grid_cache():
     """Drop all cached grids/masks (e.g. between roofs). Purely a memory control:
@@ -212,9 +213,11 @@ def _band_key(bands):
 
 def _area_cache_key(facet,valleys,pens,nots,apps,res,prof,return_zone,bands=None):
     """COMPLETE key: every input affected_area's result depends on. Any difference in
-    facet, valleys, penetration holes, notch holes, appurtenances, resolution, or the
-    resolved measurements is a MISS, so a stale result can never be reused (across
-    facets, measurement profiles, or roofs)."""
+    facet, valleys, penetration holes, notch holes, appurtenances, resolution, the
+    resolved measurements, or the ROOF SYSTEM that resolved them is a MISS, so a stale
+    result can never be reused (across facets, measurement profiles, roofs, or systems).
+    FRAME v104b (K9): until v104b the system id was missing, so this claim was false — two
+    systems at the same width and exposure shared one entry. Dispatch made it reachable."""
     return (_poly_key(facet),
             _hashable_valleys(valleys),
             tuple(_poly_key(h) for h in (pens or [])),
@@ -222,6 +225,7 @@ def _area_cache_key(facet,valleys,pens,nots,apps,res,prof,return_zone,bands=None
             _hashable_apps(apps),
             float(res),
             float(prof["width_in"]), float(prof["exposure_in"]),
+            str(prof["system_id"]),   # FRAME v104b (K9)
             bool(return_zone),
             _band_key(bands))
 
@@ -438,11 +442,22 @@ def mkframe_pts(points3d_order, eave_a, eave_b):
     nrm/=np.linalg.norm(nrm)
     if nrm[2]<0: nrm=-nrm
     g=np.array([0,0,-1.0])
-    fall=g-np.dot(g,nrm)*nrm; fall/=np.linalg.norm(fall)
-    up=-fall
-    x=np.cross(up,nrm); x/=np.linalg.norm(x)
+    fall=g-np.dot(g,nrm)*nrm
+    # FRAME v105: a FLAT facet has no fall line — its normal is (0,0,1), gravity's in-plane part is the ZERO vector,
+    # and normalising it was the NaN Emporia's F11 (pitch 0) produced. The guard tests the RAW vector, before any
+    # divide. Threshold measured, not guessed: flat is exactly 0; the flattest PITCHED facet in any claim is 0.083045
+    # (Killarney, 1/12), eight orders of magnitude above 1e-9. A flat facet's basis comes from its own anchor edge:
+    # x along it (exactly what the pitched branch arranges by flipping x to agree with er), up = cross(nrm, x), so
+    # cross(up, nrm) == x — the pitched branch's own handedness, and no flip is needed.
     er=np.array(eave_b,float)-np.array(eave_a,float)
-    if np.dot(x,er)<0: x=-x
+    if np.linalg.norm(fall)<1e-9:
+        x=er/np.linalg.norm(er)
+        up=np.cross(nrm,x)
+    else:
+        fall/=np.linalg.norm(fall)
+        up=-fall
+        x=np.cross(up,nrm); x/=np.linalg.norm(x)
+        if np.dot(x,er)<0: x=-x
     O=pp[0]
     return lambda p3: np.array([np.dot(np.array(p3,float)-O,x),
                                 np.dot(np.array(p3,float)-O,up)])
@@ -505,3 +520,104 @@ def excluded_region_aware_notch_fan(facet, holes, seg_a, seg_b, band=2.0, reach=
         return _xfan(nrm) if pa > ma else _xfan(-nrm)
     cen = fp.mean(axis=0)
     return 1 if cen[0] > mid[0] else -1
+
+
+# =============================================================================================
+# FRAME v104d — A RIDGE OR HIP GETS AN IDENTITY: THE CONTINUOUS RUN (ledger entry 94, Joseph)
+# =============================================================================================
+# "One material is picked for the whole length of the continuous ridge or hip ... wherever there is a ridge or hip
+# that is adjoining 2 separate roof coverings then the ridge and hip caps connecting those 2 separate roof systems
+# have to be defined by the user." The unit of declaration is the CONTINUOUS RUN — not the segment, not the facet.
+# This builds the identity only (the per-run material control waits for a second covering).
+#
+# A run is a maximal chain of ridge (or hip) LINEs joined end to end: two lines of the SAME type join when they share
+# an endpoint (by point id, or by coordinates — EagleView may repeat a corner under two ids across a facet boundary)
+# AND they continue in a straight line through it (opposite directions from the shared point). A ridge meeting hips
+# at a junction is not collinear with them, so it ends there. The run id is DERIVED FROM ITS MEMBER LINE IDS, never
+# from iteration order: "<TYPE>:<ids joined by '+'>", ids in natural order — the same XML always yields the same ids,
+# so a run survives a claim save and a re-parse.
+RUN_EDGE_TYPES = ("RIDGE", "HIP")
+_RUN_COLLINEAR_COS = 0.999       # within ~2.6 degrees: a straight continuation, not a bend
+_RUN_POINT_DIGITS = 4            # coordinates equal to 1e-4 ft are the same point
+
+
+def _run_natural_key(s):
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(s))]
+
+
+def _run_len3d(pts):
+    return float(sum(np.linalg.norm(np.subtract(pts[k + 1], pts[k])) for k in range(len(pts) - 1)))
+
+
+def ridge_hip_runs(geom):
+    """The continuous ridge and hip runs of an EagleView geometry (duck-typed: .lines, .points, .faces).
+
+    Returns a list, sorted by run id, of dicts:
+      run_id         "<TYPE>:<member ids>" — derived from the members, stable across save and re-parse
+      type           "RIDGE" or "HIP"
+      edge_ids       the member LINE ids, in natural order
+      total_LF       the run's 3D length: the sum of its members' lengths
+      facets_left / facets_right
+                     the ROOF facets bordering the run on each side (plan view, looking along the run from its
+                     first point), facet ids in natural order
+    Every RIDGE/HIP line belongs to exactly one run (a partition)."""
+    pts = geom.points
+    lines = [l for l in geom.lines.values() if l.type in RUN_EDGE_TYPES and len(l.path) >= 2]
+
+    def _key(pid):
+        return tuple(round(float(c), _RUN_POINT_DIGITS) for c in pts[pid])
+
+    def _unit(a, b):
+        v = np.subtract(pts[b], pts[a]).astype(float)
+        n = float(np.linalg.norm(v))
+        return v / n if n > 0 else v
+
+    parent = {l.id: l.id for l in lines}
+
+    def _find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    # endpoint -> [(line, direction pointing AWAY from that endpoint)]
+    ends = {}
+    for l in lines:
+        ends.setdefault(_key(l.path[0]), []).append((l, _unit(l.path[0], l.path[1])))
+        ends.setdefault(_key(l.path[-1]), []).append((l, _unit(l.path[-1], l.path[-2])))
+    for members in ends.values():
+        for i in range(len(members)):
+            for j in range(i + 1, len(members)):
+                (la, da), (lb, db) = members[i], members[j]
+                if la.id != lb.id and la.type == lb.type and float(np.dot(da, db)) <= -_RUN_COLLINEAR_COS:
+                    ra, rb = _find(la.id), _find(lb.id)
+                    if ra != rb:
+                        parent[rb] = ra
+
+    groups = {}
+    for l in lines:
+        groups.setdefault(_find(l.id), []).append(l)
+
+    roof_faces = {fid: f for fid, f in geom.faces.items() if getattr(f, "type", "") == "ROOF"}
+    out = []
+    for members in groups.values():
+        members = sorted(members, key=lambda l: _run_natural_key(l.id))
+        ids = [l.id for l in members]
+        typ = members[0].type
+        total = sum(_run_len3d([pts[p] for p in l.path]) for l in members)
+        # a reference direction for the whole run (all members are collinear): the first member, as written
+        a0, b0 = members[0].path[0], members[0].path[-1]
+        ref = np.subtract(pts[b0], pts[a0]).astype(float)[:2]
+        left, right = set(), set()
+        idset = set(ids)
+        for fid, f in roof_faces.items():
+            if not idset.intersection(f.line_ids):
+                continue
+            fpts = [pts[p] for lid in f.line_ids for p in geom.lines[lid].path if lid in geom.lines]
+            cx = float(np.mean([p[0] for p in fpts])); cy = float(np.mean([p[1] for p in fpts]))
+            side = ref[0] * (cy - pts[a0][1]) - ref[1] * (cx - pts[a0][0])
+            (left if side > 0 else right).add(fid)
+        out.append({"run_id": f"{typ}:{'+'.join(ids)}", "type": typ, "edge_ids": ids, "total_LF": total,
+                    "facets_left": sorted(left, key=_run_natural_key),
+                    "facets_right": sorted(right, key=_run_natural_key)})
+    return sorted(out, key=lambda r: _run_natural_key(r["run_id"]))

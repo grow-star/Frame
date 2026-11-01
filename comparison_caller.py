@@ -17,7 +17,7 @@ from module3_comparison_oracle import build_comparison
 # manual_carrier_entry itself uses when it restricts to one structure, so a per-structure carrier side
 # built here is byte-identical in shape and semantics to the single-structure path.
 from manual_carrier_entry import _restrict_to_structure
-from shared_category_registry import field_category_id   # FRAME v99: the mixed-scope note's row (bridge 4)
+from shared_category_registry import field_category_ids, system_for_field_category   # FRAME v104e: bridge 4 RETIRED at _surface_mixed_scope — no package picked
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,10 @@ class RequiredLineForComparison:
     # key_and_normalize reads this to tell a user's own label apart from the generic category item so it
     # can group by label. Additive with a default, so every existing caller is unchanged.
     citation: Optional[str] = None
+    # FRAME v104d: the line's roof system, carried through. v104c's adapter dropped it, so key_and_normalize's per-line
+    # read fell back to the sole package — harmless with one, a RegistryWiringError on every mixed-roof comparison.
+    # Additive with a default, so every existing caller is unchanged.
+    material_profile_id: Optional[str] = None
 
 
 def _required_lines_with_item(lines: Iterable[Any]) -> Sequence[RequiredLineForComparison]:
@@ -43,6 +47,7 @@ def _required_lines_with_item(lines: Iterable[Any]) -> Sequence[RequiredLineForC
             qty=float(getattr(line, "qty")),
             unit=getattr(line, "unit"),
             citation=getattr(line, "citation", None),
+            material_profile_id=getattr(line, "material_profile_id", None),   # FRAME v104d
         ))
     return tuple(out)
 
@@ -76,6 +81,31 @@ def _structure_affected_sf(module2_result: Any) -> Mapping[str, float]:
     raw = (module2_result.get("structure_affected_SF", ()) if isinstance(module2_result, Mapping)
            else getattr(module2_result, "structure_affected_SF", ())) or ()
     return {str(sid): float(sf) for sid, sf in raw}
+
+
+def _per_system(raw: Any, fallback: Any) -> Any:
+    """{system_id: SF} from a ((system_id, SF), ...) tuple — or `fallback` (the claim-level figure) when there is none
+    or any area is unattributed (""). With one system the mapping's one value IS the fallback figure (the same
+    components, summed in the same order), so key_and_normalize gets today's dual; on a mixed roof the fallback
+    reaches key_and_normalize's gate and raises."""
+    pairs = [(str(k), float(v)) for k, v in (raw or ())]
+    if not pairs or any(k == "" for k, _ in pairs):
+        return fallback
+    return dict(pairs)
+
+
+def _system_affected_sf(module2_result: Any) -> Any:
+    """FRAME v104d (QA Q1 (a)): the claim's affected SF per roof system, for key_and_normalize's dual."""
+    raw = (module2_result.get("system_affected_SF", ()) if isinstance(module2_result, Mapping)
+           else getattr(module2_result, "system_affected_SF", ()))
+    return _per_system(raw, _affected_sf(module2_result))
+
+
+def _structure_system_affected_sf(module2_result: Any) -> Mapping[str, Any]:
+    """FRAME v104d (QA Q1 (a)): {structure_id: ((system_id, SF), ...)} — each structure's affected SF per roof system."""
+    raw = (module2_result.get("structure_system_affected_SF", ()) if isinstance(module2_result, Mapping)
+           else getattr(module2_result, "structure_system_affected_SF", ())) or ()
+    return {str(sid): v for sid, v in raw}
 
 
 def _structure_facet_counts(module2_result: Any) -> Mapping[str, int]:
@@ -144,21 +174,27 @@ def _surface_mixed_scope(comparison: Mapping[str, Any], scope_lines: Iterable[An
     area (Formula Spec §2.4.2), which no single scope line carries. Mark that row with the facts §5's note
     states, so the renderer appends the sentence (the v93 pattern: the row carries the data). Called only on
     COMPARISON_READY paths. No literal quantity: the comparison figure is the row's own required_quantity; the
-    line items are module2_assembly.field_quantities (the ONE authority); the repair share is DERIVED from those
+    line items are module2_assembly.field_quantities_by_system (the ONE authority, per system — v104e); the repair share is DERIVED from those
     two — the comparison figure less the replacement line (the dual's definition: whole area = replacement +
     repair; field_quantity_agreement_regression holds it to the repair components within 0.0001). Nothing on
     the row is changed; one key is added."""
     if not comparison:
         return comparison
     import types
-    from module2_assembly import field_quantities   # function-local: page 3's import must not register the package (bridge 3)
-    by_unit = {u: q for q, u in field_quantities(types.SimpleNamespace(aggregated_scope=list(scope_lines or ())))}
-    if "SQ" not in by_unit or "EA" not in by_unit:
+    from module2_assembly import field_quantities_by_system   # function-local: page 3's import must not register the package (bridge 3)
+    # FRAME v104e: PER SYSTEM — bridge 4 retired here. Each system's field covering gets ITS OWN mixed_scope from ITS
+    # OWN SQ and EA figures (v104d's field_quantities raises on two systems, by design). With one system this is the
+    # v104d computation exactly.
+    by_system = field_quantities_by_system(types.SimpleNamespace(aggregated_scope=list(scope_lines or ())))
+    if not any("SQ" in {u for _, u in v} and "EA" in {u for _, u in v} for v in by_system.values()):
         return comparison
-    fid = field_category_id()
+    fids = field_category_ids()                          # "is this a field covering?" — every system's, none picked
     for line in comparison.get("lines", ()) or ():
-        if line.get("category_id") == fid and line.get("required_unit") == "SQ" \
-                and line.get("required_quantity") is not None:
+        cat = line.get("category_id")
+        if cat in fids and line.get("required_unit") == "SQ" and line.get("required_quantity") is not None:
+            by_unit = {u: q for q, u in by_system.get(system_for_field_category(cat), ())}   # "whose?" — its own figures
+            if "SQ" not in by_unit or "EA" not in by_unit:
+                continue
             total = float(line["required_quantity"])
             line["mixed_scope"] = {
                 "comparison_quantity": total,
@@ -186,7 +222,7 @@ def build_scope_comparison(module2_result: Any, carrier_summary: Optional[Mappin
     if carrier_summary is None:
         required, required_totals = key_and_normalize(
             _required_lines_with_item(_aggregated_scope(module2_result)),
-            _affected_sf(module2_result),
+            _system_affected_sf(module2_result),        # FRAME v104d: per system (QA Q1 (a))
         )
         _ops_all, _unres_all = _two_facet_required_operations(module2_result)
         comparison = build_comparison(required, None, required_operations=_ops_all or None)   # inert: no lines
@@ -202,7 +238,7 @@ def build_scope_comparison(module2_result: Any, carrier_summary: Optional[Mappin
 
     required, required_totals = key_and_normalize(
         _required_lines_with_item(_aggregated_scope(module2_result)),
-        _affected_sf(module2_result),
+        _system_affected_sf(module2_result),            # FRAME v104d: per system (QA Q1 (a))
     )
     # v72 DEFECT 2: a FULL replacement (every scoped facet replaced, none repaired) flips the required
     # activity code for the non-shake components to REPLACE — they come off with the shakes anyway. A
@@ -241,10 +277,12 @@ def build_scope_comparison(module2_result: Any, carrier_summary: Optional[Mappin
                     "scope_comparison": None}
 
         aff = _structure_affected_sf(module2_result)
+        aff_sys = _structure_system_affected_sf(module2_result)   # FRAME v104d: per structure, per system
         _fallback_sf = _affected_sf(module2_result)
         structure_comparisons = []
         for sid, lines in by_structure:
-            req_sid, tot_sid = key_and_normalize(_required_lines_with_item(lines), aff.get(sid, _fallback_sf))
+            req_sid, tot_sid = key_and_normalize(_required_lines_with_item(lines),
+                                                 _per_system(aff_sys.get(sid), aff.get(sid, _fallback_sf)))
             carrier_sid = _carrier_view_for_structure(carrier_summary, sid)
             ops_sid, unres_sid = _two_facet_required_operations(module2_result, sid)
             comp_sid = _surface_mixed_scope(_surface_unresolved(

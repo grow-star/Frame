@@ -22,7 +22,7 @@ keeps every existing MATCHED case (implicit R&R / no operation asserted) MATCHED
 
 from __future__ import annotations
 
-from shared_category_registry import field_category_id   # FRAME v98: core asks; the package answers (bridge 4)
+from shared_category_registry import field_category_ids   # FRAME v104e: bridge 4 RETIRED here — membership, no package picked
 
 # ---------------------------------------------------------------------------
 # §1.1 Canonical operation set
@@ -275,12 +275,13 @@ _FLASHING_DEFAULT_RR = frozenset({
 
 
 def default_required_operation(category_id):
-    """§2.1 sensible prefill. The FIELD COVERING (the registered package's field_category_id()) -> R_AND_R;
+    """§2.1 sensible prefill. A FIELD COVERING (any registered system's declared field id) -> R_AND_R;
     flashing categories -> R_AND_R on a shake roof (interlaced/bonded). Everything else -> None (no
     operation asserted by default, so it never manufactures a divergence). Page 3 supplies/overrides per
     category. FRAME v98: core no longer names the field covering's id — in code or in this docstring."""
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
-    if category_id == _fid:
+    # FRAME v104e: bridge 4 RETIRED here — "is this a field covering?" needs no package. On a mixed roof EVERY field
+    # covering is a remove-and-replace, so each gets R_AND_R.
+    if category_id in field_category_ids():
         return R_AND_R
     if category_id in _FLASHING_DEFAULT_RR:
         return R_AND_R

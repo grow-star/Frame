@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from module3_render_engine import render
-from shared_category_registry import field_category_id   # FRAME v98: core asks; the package answers (bridge 4)
+from shared_category_registry import (field_category_id, line_system, material_splits,   # FRAME v104c: per line,
+                                      sole_category_package)                         # or the sole package (bridge 4)
 
 DIAGRAM_PENDING = "DIAGRAM_PENDING_PAGE2"
 
@@ -177,7 +178,12 @@ def _structure_blocks(module2_result: Any, roof_structure_id: Optional[str]) -> 
     FIRST — it is the dwelling; the subordinate structures follow, ordered by the trailing integer of
     their ROOF id (ROOF1, ROOF2, ...) as a deterministic tiebreak. When no structure was asserted, the
     one with the most facets leads (still the dwelling), then the same tiebreak."""
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104c: PER LINE — a line (object or serialized dict) is a field line when its category is ITS OWN
+    # system's field covering. A merged category is a core id, never a field covering, so it needs no lookup.
+    def _is_field(l):
+        cid = _field(l, "category_id")
+        return material_splits(cid) and cid == field_category_id(
+            line_system(l, "module3_caller._structure_blocks: a line with no material"))
     def _get(name):
         return (module2_result.get(name, ()) if isinstance(module2_result, Mapping)
                 else getattr(module2_result, name, ())) or ()
@@ -212,8 +218,8 @@ def _structure_blocks(module2_result: Any, roof_structure_id: Optional[str]) -> 
             suffix = f" {detached_n}" if (len(ordered) - 1) > 1 else ""
             heading = f"Detached structure{suffix} — {n} facets" if n else f"Detached structure{suffix}"
         lines = by_lines[sid]
-        shake_sq = next((_field(l, "qty") for l in lines if _field(l, "category_id") == _fid and _field(l, "unit") == "SQ"), None)
-        shake_ea = next((_field(l, "qty") for l in lines if _field(l, "category_id") == _fid and _field(l, "unit") == "EA"), None)
+        shake_sq = next((_field(l, "qty") for l in lines if _is_field(l) and _field(l, "unit") == "SQ"), None)
+        shake_ea = next((_field(l, "qty") for l in lines if _is_field(l) and _field(l, "unit") == "EA"), None)
         out.append({
             "structure_id": sid,
             "heading": heading,
@@ -384,7 +390,8 @@ def _required_scope_from_module2(module2_result: Any) -> Sequence[Mapping[str, A
 
 
 def _shake_dual_from_lines(lines: Sequence[Mapping[str, Any]], comparison_result: Optional[Mapping[str, Any]]) -> Optional[Mapping[str, Any]]:
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — comparison rows carry a category, not a system.
+    _fid = field_category_id(sole_category_package("module3_caller._shake_dual_from_lines: comparison rows"))
     for line in lines:
         if line.get("category_id") == _fid:
             return {"comparison_quantity": line.get("required_quantity"), "comparison_unit": line.get("required_unit", "SQ"),
@@ -395,7 +402,8 @@ def _shake_dual_from_lines(lines: Sequence[Mapping[str, Any]], comparison_result
 
 
 def _shake_dual_from_required(required: Optional[Mapping[str, Mapping[str, Any]]]) -> Optional[Mapping[str, Any]]:
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — a category-keyed `required` map carries no system.
+    _fid = field_category_id(sole_category_package("module3_caller._shake_dual_from_required: a category-keyed map"))
     if not required or _fid not in required:
         return None
     shake = required[_fid]

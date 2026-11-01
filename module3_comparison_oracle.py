@@ -23,10 +23,11 @@ SCOPE / HONESTY (read this):
   Module 1/2 (imported/frozen). No F9, no Authority, no policy/coverage.
 """
 
-from module2_scope_expansion import M1Interface, Edge, expand_scope
+from scope_contract import M1Interface, Edge   # FRAME v104b: the contract from core (the same objects)
+from roof_systems import get as roof_system, sole_registered_system   # FRAME v104b: the engine is asked for (bridge 6 retired)
 from module3_keying import key_and_normalize
 from shared_category_registry import REGISTRY_SET
-from shared_category_registry import field_category_id   # FRAME v98: core asks; the package answers (bridge 4)
+from shared_category_registry import field_category_ids   # FRAME v104e: bridge 4 RETIRED here — membership, no package picked
 from operation_dimension import (
     apply_operation_overlay,
     carrier_operation_for_category,
@@ -51,6 +52,10 @@ ALWAYS_R_AND_R = frozenset({
 })
 
 
+# FRAME v104e: bridge 4 RETIRED in _required_op_ctx — "non-shake" is "not ANY registered system's field covering"
+# (field_category_ids(), no package picked), the same membership operation_dimension.default_required_operation asks;
+# on a mixed roof every covering stays R_AND_R on a full replacement. (Outside the function: its source is compared
+# semantically to v97.1's by two_facet_operation_regression.)
 def _required_op_ctx(category_id, required_operations, is_replacement):
     """Context-aware required operation. A Page-3 assertion still wins; then the ALWAYS_R_AND_R
     exception; then the §2.1 default, promoted to REPLACE for non-shake components on a full
@@ -61,7 +66,7 @@ def _required_op_ctx(category_id, required_operations, is_replacement):
     if category_id in ALWAYS_R_AND_R:
         return R_AND_R
     base = default_required_operation(category_id)
-    if is_replacement and base == R_AND_R and category_id != field_category_id():
+    if is_replacement and base == R_AND_R and category_id not in field_category_ids():
         return REPLACE
     return base
 
@@ -101,7 +106,10 @@ def build_comparison(required, carrier, required_operations=None, is_replacement
     defaults, and no line moves to OPERATION_DIFFERENCE unless BOTH operations are known and
     differ, so every pre-existing MATCHED case is preserved.
     """
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104e: bridge 4 RETIRED here. The site only asks "is this category a field covering?" — answered for
+    # every registered system at once, no package picked. The dual's figures are already per system in `required`
+    # (key_and_normalize, v104d); the map is NOT re-keyed by system (_aggregate_lines owns that rule).
+    _fids = field_category_ids()
     if carrier is None:                                    # §2.7 optional-statement path
         return {"mode": "REQUIRED_SCOPE_ONLY", "comparison_precondition": None,
                 "lines": [], "required_only": [k for k in required if k not in _FOLD]}
@@ -115,7 +123,7 @@ def build_comparison(required, carrier, required_operations=None, is_replacement
         cat = "RIDGE_HIP_CAP" if rkey == "RIDGE_HIP_CAP__combined" else rkey
         runit, rqty = rent["comparison_unit"], rent["comparison_quantity"]
         line = {"category_id": cat, "required_quantity": rqty, "required_unit": runit}
-        if cat == _fid:                        # dual value (§2.4.2)
+        if cat in _fids:                       # dual value (§2.4.2)
             line["supporting_quantity"] = rent.get("supporting_quantity")
             line["supporting_unit"] = "EA"
 
@@ -134,7 +142,7 @@ def build_comparison(required, carrier, required_operations=None, is_replacement
         # byte-identical.
         _labels = rent.get("labels") or []
         _user_labels = [L for L in _labels if L.get("user_defined")]
-        if _user_labels and cat != _fid and _CARRIER_FOLD.get(cat) is None:
+        if _user_labels and cat not in _fids and _CARRIER_FOLD.get(cat) is None:
             _generic_qty = round(sum(L["qty"] for L in _labels if not L.get("user_defined")), 4)
             _gen_cite = next((L.get("citation") for L in _labels if not L.get("user_defined")), None)
             if _generic_qty > 1e-9:
@@ -282,7 +290,7 @@ _D = M1Interface(affected_SF=28.2, valley_LF_in_scope=7.74,
 # the oracle (and so comparison_caller, page 3's entry) call field_category_id() at import — gate-invisible,
 # since no literal sits on the line. Found by trapping the lookup and importing all 40 modules. Values unchanged.
 def _required():
-    return key_and_normalize(expand_scope(_D, 1.0), 28.2)[0]
+    return key_and_normalize(roof_system(sole_registered_system("the oracle's seed fixture")).expand_scope(_D, 1.0), 28.2)[0]
 
 # ---------------------------------------------------------------------------
 # FROZEN carrier side: Yager/State Farm identity, SEED-ALIGNED to facet D,

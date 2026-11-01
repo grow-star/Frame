@@ -29,7 +29,11 @@ from candidate_model import Candidate
 from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry
 from module1_m2interface import affected_area, build_m1_interface_for_face, edge_contacts, _quiet_import_regression_symbol
 from module1_selected_valley_handoff import selected_valley_handoff
-from module2_scope_expansion import Edge, M1Interface, ScopeLine, Transition, expand_scope, eave_iws_coverage, _eave_iws_citation
+from scope_contract import Edge, M1Interface, ScopeLine, Transition   # FRAME v104b: the contract from core (the same objects)
+from module2_scope_expansion import eave_iws_coverage, _eave_iws_citation   # the eave-IWS helpers: not the engine, not dispatched
+# FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired). With a facet in hand, system_for_facet;
+# with none (per-transition, per-edge, per-structure calls), the sole registered system — both v104a's, no third path.
+from roof_systems import get as roof_system, sole_registered_system, system_for_facet
 from candidate_emitters import emit_valley_candidates          # v93: THE valley facet-pair source (bordering_roof_face_ids)
 from operation_dimension import R_AND_R, REPLACE                  # v93: the canonical operation constants
 from transition_events import (
@@ -46,7 +50,8 @@ from notch_candidate_emitter import emit_notch_candidates, encoding_b_candidate 
 # ONE AUTHORITY for "does this appurtenance disturb the shake field?". module1_service imports
 # the SAME function for the diagram, so the picture cannot disagree with the scope.
 from shared_category_registry import appurtenance_carves, is_power_vent
-from shared_category_registry import field_category_id   # FRAME v98: core asks; the package answers (bridge 4)
+from shared_category_registry import (field_category_id, line_system, material_splits,   # FRAME v104c: per system
+                                      sole_category_package, RegistryWiringError)       # v104d: the mixed-roof gate
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,9 @@ class AggregatedScopeLine:
     # pushes back on. The report is supposed to DEMONSTRATE and let the reader conclude; it could not,
     # because the reason was destroyed before it reached the renderer.
     citation: Optional[str] = None
+    # FRAME v104c: the roof system the merged lines came from. A SPLIT category (the default) never mixes systems,
+    # so it carries its one material; a MERGED category carries the common material, or None when two systems summed.
+    material_profile_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +140,14 @@ class RoofAssemblyResult:
     # HERE, where the component's own two facets are known (Joseph 2026-10-26, see _two_facet_operation);
     # comparison_caller turns the votes into build_comparison's required_operations. Additive, default ().
     two_facet_operations: Tuple[Tuple[str, str, str, Optional[str]], ...] = ()
+    # FRAME v104d (QA Q1 (a)): the affected SF PER ROOF SYSTEM — claim-level and per structure — summed from the SAME
+    # components, in the same order, as affected_SF_raw_total and structure_affected_SF, so with one system each is
+    # that figure exactly. A component's system is the material its engine stamped on its lines. A component with area
+    # whose lines carry no single material is filed under "" (unattributed), and comparison_caller then falls back
+    # to the claim-level figure (which raises on a mixed roof). Additive, default (). Read by comparison_caller, which
+    # hands key_and_normalize {system_id: SF} so each field covering's dual uses ITS system's area.
+    system_affected_SF: Tuple[Tuple[str, float], ...] = ()
+    structure_system_affected_SF: Tuple[Tuple[str, Tuple[Tuple[str, float], ...]], ...] = ()
 
 
 mkframe_pts = _quiet_import_regression_symbol("mkframe_pts")
@@ -223,7 +239,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             high_slope_user_flag=(str(face_id) in _high_slope),
         )
         edge_contribs = _face_edge_contributions(geom, face_id, (valley_id,), str(row.get("label", face_id)), shake_measurements)
-        components.append(_component(row, face_id, "single_valley", "derived", "fully_surfaced", "face, valley event, edges, and valley LF derived from parser/candidates", iface, edge_contribs))
+        components.append(_component(row, face_id, "single_valley", "derived", "fully_surfaced", "face, valley event, edges, and valley LF derived from parser/candidates", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
     for item in confirmed_selection.get("multi_valley_facets", ()):  # type: ignore[union-attr]
@@ -246,7 +262,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             high_slope_user_flag=(str(face_id) in _high_slope),
         )
         edge_contribs = _face_edge_contributions(geom, face_id, valley_ids, str(row.get("label", face_id)), shake_measurements)
-        components.append(_component(row, face_id, "multi_valley", "derived", "fully_surfaced", "multi-valley union, edges, and non-duplicated selected valley LF derived from parser/candidates", iface, edge_contribs))
+        components.append(_component(row, face_id, "multi_valley", "derived", "fully_surfaced", "multi-valley union, edges, and non-duplicated selected valley LF derived from parser/candidates", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
     # --- PATH C: FULL SLOPE REPLACEMENT (v61) -------------------------------------------------
@@ -288,7 +304,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         )
         edge_contribs = _replacement_edge_contributions(geom, face_id, label)
         components.append(_component(row, face_id, "replacement", "derived", "fully_surfaced",
-            "full slope replacement: whole facet net of penetrations, 100% perimeter contact, all valleys fully in scope", iface, edge_contribs))
+            "full slope replacement: whole facet net of penetrations, 100% perimeter contact, all valleys fully in scope", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
     for item in confirmed_selection.get("penetration_appurtenance_repairs", ()):  # type: ignore[union-attr]
@@ -332,7 +348,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             high_slope_user_flag=(str(host_face_id) in _high_slope),
         )
         edge_contribs = _face_edge_contributions(geom, host_face_id, (), str(row.get("label", host_face_id)), shake_measurements)
-        components.append(_component(row, host_face_id, "penetration_appurtenance", "derived", "fully_surfaced", "host facet, appurtenance footprint, edges, and Appurt payload derived from parser/candidates", iface, edge_contribs))
+        components.append(_component(row, host_face_id, "penetration_appurtenance", "derived", "fully_surfaced", "host facet, appurtenance footprint, edges, and Appurt payload derived from parser/candidates", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
     for item in confirmed_selection.get("user_appurtenance_repairs", ()):  # type: ignore[union-attr]
@@ -367,7 +383,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             high_slope_user_flag=(str(host_face_id) in _high_slope),
         )
         edge_contribs = _face_edge_contributions(geom, host_face_id, (), str(row.get("label", row.get("designator", host_face_id))), shake_measurements)
-        components.append(_component(row, host_face_id, "user_appurtenance", "derived", "fully_surfaced", "host facet and user-entered appurtenance footprint supplied by confirmed selection", iface, edge_contribs))
+        components.append(_component(row, host_face_id, "user_appurtenance", "derived", "fully_surfaced", "host facet and user-entered appurtenance footprint supplied by confirmed selection", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
     for item in confirmed_selection.get("notch_repairs", ()):  # type: ignore[union-attr]
@@ -375,7 +391,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         member_face_ids = tuple(str(v) for v in row["member_face_ids"])
         candidate = _require_notch_candidate(notch_candidates, member_face_ids)
         iface, edge_contribs = _build_m1_interface_for_notch(geom, candidate, selected_valley_ids, valley_lf_claimed, str(row.get("label", "+".join(member_face_ids))), confirmed_selection=confirmed_selection, override_valley_ids=row.get("valley_ids"), shake_measurements=shake_measurements)
-        components.append(_component(row, "+".join(member_face_ids), "notch", "derived", "fully_surfaced", "merged facet, notch polygon, RIDGE anchor, VALLEY events, and edges derived from notch candidate", iface, edge_contribs))
+        components.append(_component(row, "+".join(member_face_ids), "notch", "derived", "fully_surfaced", "merged facet, notch polygon, RIDGE anchor, VALLEY events, and edges derived from notch candidate", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
     # --- PATH B: carve the band on every facet the transition touches --------------------------
@@ -432,7 +448,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         components.append(_component(
             row, face_id, "transition_repair", "derived", "fully_surfaced",
             "user-confirmed transition repair event (exposed + damaged); band carved on both facets",
-            iface, ()))
+            iface, (), confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
     # ONE TRANSITION_FLASH per transition, emitted at the ROOF level (never per facet), exactly as
@@ -458,13 +474,13 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             for t in active_transitions
         ]
         transition_scope_lines = tuple(
-            expand_scope(M1Interface(transitions=transitions_for_scope, **_iface_profile(shake_measurements)),
+            roof_system(sole_registered_system("module2_assembly: the roof-level transition lines")).expand_scope(M1Interface(transitions=transitions_for_scope, **_iface_profile(shake_measurements)),
                          repair_factor=1.0))
         # v93: which of these transitions actually BILL flashing — asked of the same emission authority, one
         # transition at a time, so a transition answered NONE / MEMBRANE (no flashing line) casts no vote.
         _flash_edges = [
             t for t, tr in zip(active_transitions, transitions_for_scope)
-            if any(l.category_id == "TRANSITION_FLASH" for l in expand_scope(
+            if any(l.category_id == "TRANSITION_FLASH" for l in roof_system(sole_registered_system("module2_assembly: the transition-flash probe")).expand_scope(
                 M1Interface(transitions=[tr], **_iface_profile(shake_measurements)), repair_factor=1.0))]
     else:
         _flash_edges = []
@@ -549,6 +565,23 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         elif c.component_type in ("single_valley", "multi_valley"):
             _rep_by_struct.setdefault(sid, []).append(c.label)
     structure_affected_SF = tuple(sorted(_aff_by_struct.items(), key=lambda kv: _struct_sort_key(kv[0])))
+    # FRAME v104d (QA Q1 (a)): the same sums, per roof system — the system is the material the engine stamped.
+    # The claim-level sum uses sum() exactly as raw_total does (sum() is compensated, a += loop is not: on Killarney the
+    # two differ in the last bit); the per-structure sums use += exactly as _aff_by_struct does.
+    _aff_by_sys: MutableMapping[str, List[float]] = {}
+    _aff_by_struct_sys: MutableMapping[str, MutableMapping[str, float]] = {}
+    for c in components:
+        _mats = {l.material_profile_id for l in c.scope_lines}
+        _sysid = next(iter(_mats)) if len(_mats) == 1 and None not in _mats else ""
+        if not _sysid and not float(c.iface.affected_SF):
+            continue                                     # no area, no system: contributes nothing either way
+        _sid = _structure_of_face(geom, c.face_id)
+        _aff_by_sys.setdefault(_sysid, []).append(c.iface.affected_SF)
+        _ss = _aff_by_struct_sys.setdefault(_sid, {})
+        _ss[_sysid] = _ss.get(_sysid, 0.0) + float(c.iface.affected_SF)
+    system_affected_SF = tuple(sorted((k, float(sum(v))) for k, v in _aff_by_sys.items()))
+    structure_system_affected_SF = tuple((sid, tuple(sorted(v.items())))
+                                         for sid, v in sorted(_aff_by_struct_sys.items(), key=lambda kv: _struct_sort_key(kv[0])))
     replacement_facets_by_structure = tuple((sid, tuple(v)) for sid, v in sorted(_repl_by_struct.items(), key=lambda kv: _struct_sort_key(kv[0])))
     repair_facets_by_structure = tuple((sid, tuple(v)) for sid, v in sorted(_rep_by_struct.items(), key=lambda kv: _struct_sort_key(kv[0])))
     # v63 DEFECT 3: the valley-LF total the header reports must be the SAME authority that bills the
@@ -589,6 +622,8 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         aggregated_scope_by_structure=aggregated_by_structure,
         structure_facet_counts=structure_facet_counts,
         structure_affected_SF=structure_affected_SF,
+        system_affected_SF=system_affected_SF,
+        structure_system_affected_SF=structure_system_affected_SF,
         replacement_facets_by_structure=replacement_facets_by_structure,
         repair_facets_by_structure=repair_facets_by_structure,
         eave_iws=eave_iws_meta,
@@ -612,8 +647,10 @@ def _two_facet_operation(pair, replaced) -> Optional[str]:
     return REPLACE if (pair[0] in replaced and pair[1] in replaced) else R_AND_R
 
 
-def _component(row: Mapping[str, object], face_id: str, component_type: str, geometry_status: str, surface_status: str, reason: str, iface: M1Interface, edge_contribs: Sequence[EdgeContribution]) -> ComponentAssembly:
-    lines = tuple(expand_scope(iface, repair_factor=1.0))
+def _component(row: Mapping[str, object], face_id: str, component_type: str, geometry_status: str, surface_status: str, reason: str, iface: M1Interface, edge_contribs: Sequence[EdgeContribution], *, confirmed_selection: Mapping[str, object]) -> ComponentAssembly:
+    # FRAME v104b: the component's own facet decides its scope engine (v104a's system_for_facet). A notch's face_id is its
+    # members joined ('F21+F22'), which no exception can name, so it takes the predominant / sole system.
+    lines = tuple(roof_system(system_for_facet(face_id, confirmed_selection)).expand_scope(iface, repair_factor=1.0))
     # The steep line leaves expand_scope with no tier on it, so three tiers would merge into one.
     # Stamp the component's own tier here — the single place every component's lines are produced.
     lines = _stamp_steep_tier(lines, iface.facet_pitch_tier)
@@ -766,7 +803,7 @@ def _edge_lines_with_ridge_vents(contribs, ridge_vents: Mapping[str, Mapping[str
     out = []
     for contrib in contribs:
         edge = Edge(contrib.edge_type, contrib.contact_LF, contrib.edge_total_LF)
-        lines = list(expand_scope(M1Interface(edges=[edge]), repair_factor=1.0))
+        lines = list(roof_system(sole_registered_system("module2_assembly: a per-edge line")).expand_scope(M1Interface(edges=[edge]), repair_factor=1.0))
         vent = ridge_vents.get(str(contrib.line_id)) if contrib.edge_type == "RIDGE" else None
         if not vent:
             out.extend(lines)
@@ -1537,7 +1574,7 @@ def _aggregate_by_structure(geom: EagleViewGeometry, components, confirmed_selec
             edge_contribs.extend(comp.edge_contributions)
         deduped = _dedupe_edge_contributions(edge_contribs)
         edge_lines = _edge_lines_with_ridge_vents(deduped, _ridge_vents(confirmed_selection))
-        trans_lines = (tuple(expand_scope(M1Interface(transitions=trans_by_structure[sid],
+        trans_lines = (tuple(roof_system(sole_registered_system("module2_assembly: a per-structure transition line")).expand_scope(M1Interface(transitions=trans_by_structure[sid],
                                                       **_iface_profile(_profile)), repair_factor=1.0))
                        if trans_by_structure.get(sid) else ())
         out.append((sid, tuple(_aggregate_lines([*non_edge, *edge_lines, *trans_lines]))))
@@ -1557,10 +1594,16 @@ def _aggregate_lines(lines: Iterable[ScopeLine]) -> List[AggregatedScopeLine]:
     The key now includes `xact_code`, so lines that will be BILLED DIFFERENTLY are never merged.
     Same-code lines still merge exactly as before. Verified: CHIMNEY_FLASH is the ONLY category whose
     code varies (S/A/L); every other category emits a single code, so nothing else can split.
+
+    FRAME v104c: across ROOF SYSTEMS, the category decides (shared_category_registry.material_splits — Joseph,
+    2026-10-31). A SPLIT category's key carries the line's material, so two systems never merge; a MERGED category's
+    does not, so two systems' lines merge exactly when they name the same product (the item text, already in the key —
+    "one line only if it's genuinely the same product").
     """
-    totals: MutableMapping[Tuple[str, str, str, Optional[str], str], float] = {}
-    items: MutableMapping[Tuple[str, str, str, Optional[str], str], str] = {}
-    cites: MutableMapping[Tuple[str, str, str, Optional[str], str], Optional[str]] = {}
+    totals: MutableMapping[Tuple[str, str, str, Optional[str], str, Optional[str]], float] = {}
+    items: MutableMapping[Tuple[str, str, str, Optional[str], str, Optional[str]], str] = {}
+    cites: MutableMapping[Tuple[str, str, str, Optional[str], str, Optional[str]], List[str]] = {}
+    mats: MutableMapping[Tuple[str, str, str, Optional[str], str, Optional[str]], set] = {}
     for line in lines:
         code = getattr(line, "xact_code", None)
         # v77 DEFECT 5 (Joseph, binding): GROUP BY THE USER'S LABEL. The item text (the user's own
@@ -1569,19 +1612,30 @@ def _aggregate_lines(lines: Iterable[ScopeLine]) -> List[AggregatedScopeLine]:
         # IDENTICAL labels do. Standard categories emit a single stable item per (category, code), so
         # this is a no-op for them and every existing report stays byte-identical.
         item_key = str(getattr(line, "item", line.category_id) or line.category_id).strip().casefold()
-        key = (line.category_id, line.unit, line.gate, code, item_key)
+        material = getattr(line, "material_profile_id", None)
+        key = (line.category_id, line.unit, line.gate, code, item_key,
+               material if material_splits(line.category_id) else None)
         totals[key] = totals.get(key, 0.0) + float(line.qty)
         # The citation is ADDITIVE METADATA, deliberately NOT part of the key — it must never split a
-        # line. Lines that merge share the same authority; if two somehow differed we keep the first
-        # and never fabricate a blend.
-        cites.setdefault(key, getattr(line, "citation", None))
+        # line. FRAME v104c (QA Q1, reversible): every DISTINCT citation the merged lines carry is kept, in first-seen
+        # order, joined — never v98's first-wins setdefault, which silently dropped the others. A merged line exists
+        # because each source requires it, and the supplement argues better citing every standard. Identical
+        # citations collapse to one, so with one package every line is unchanged (measured: no key in the suite ever
+        # received two different citations).
+        _c = getattr(line, "citation", None)
+        _cl = cites.setdefault(key, [])
+        if _c not in (None, "") and _c not in _cl:
+            _cl.append(_c)
+        mats.setdefault(key, set()).add(material)
         # A split chimney line names its size, so a human reading the material list can tell the three
         # apart. A category with no code keeps its existing item text, unchanged.
         default_item = getattr(line, "item", line.category_id) or line.category_id
         items.setdefault(key, _XACT_SIZE_LABEL.get(code, default_item) if code else default_item)
     out = [AggregatedScopeLine(item=items[k], category_id=k[0], unit=k[1], gate=k[2],
-                               qty=round(v, 4), xact_code=k[3], citation=cites.get(k))
-           for k, v in totals.items()]  # k = (category_id, unit, gate, xact_code, item_key)
+                               qty=round(v, 4), xact_code=k[3],
+                               citation=("; ".join(cites[k]) if cites.get(k) else None),
+                               material_profile_id=(next(iter(mats[k])) if len(mats[k]) == 1 else None))
+           for k, v in totals.items()]  # k = (category_id, unit, gate, xact_code, item_key, material-or-None)
     return sorted(out, key=_trade_order_key)
 
 
@@ -1611,14 +1665,20 @@ _CORE_TRADE_ORDER = (
 )
 
 
-def _trade_order():
-    """THE ORDER AN ESTIMATE IS WRITTEN IN: the field covering first, then the core order. Per call."""
-    return (field_category_id(),) + _CORE_TRADE_ORDER
+def _trade_order(system_id=None):
+    """THE ORDER AN ESTIMATE IS WRITTEN IN: `system_id`'s field covering first, then the core order. Per call.
+
+    FRAME v104c: per SYSTEM. The sort key passes each line's own system (line_system), so on a mixed roof each
+    package's field covering ranks first. With no system given — only a reader asking for the canonical order, never
+    the sort key — it is the sole category package's (bridge 4, narrowed: raises on two or more)."""
+    if system_id is None:
+        system_id = sole_category_package("module2_assembly._trade_order() with no system (a reader of the canonical order)")
+    return (field_category_id(system_id),) + _CORE_TRADE_ORDER
 
 
-def _trade_rank():
+def _trade_rank(system_id=None):
     """{category_id: rank}, with an unknown category falling to the end (rank == len(order)), never crashing."""
-    order = _trade_order()
+    order = _trade_order(system_id)
     return {cat: i for i, cat in enumerate(order)}, len(order)
 
 # within STEEP_CHARGE the tiers read in slope order, the way a carrier writes them
@@ -1626,10 +1686,40 @@ _STEEP_TIER_RANK = {"STEEP_7-9": 0, "STEEP_10-12": 1, "STEEP_>12": 2}
 
 
 def _trade_order_key(line: AggregatedScopeLine):
-    ranks, unknown = _trade_rank()          # FRAME v98: resolved per call, never at import
+    # FRAME v98: resolved per call, never at import. FRAME v104c: per LINE — the line's own system decides whether
+    # its category is that system's field covering. A MERGED category (FIELD_FELT, DRIP_EDGE, the charges) is a core
+    # id by Joseph's ruling, and a package's field covering must be one it OWNS (register_package_categories), so a
+    # merged line is never a field line and needs no system — which a line summed from two systems does not have.
+    if material_splits(line.category_id):
+        ranks, unknown = _trade_rank(line_system(line, "module2_assembly._trade_order_key: a line with no material"))
+    else:
+        ranks, unknown = {cat: i + 1 for i, cat in enumerate(_CORE_TRADE_ORDER)}, len(_CORE_TRADE_ORDER) + 1
     rank = ranks.get(line.category_id, unknown)
     tier = _STEEP_TIER_RANK.get(line.xact_code or "", 0)
     return (rank, line.category_id, tier, line.unit, line.gate, line.xact_code or "")
+
+
+def _field_unit_order(by_unit):
+    """[(qty, unit), ...] from {unit: [qty, ...]}: SQ first, then EA, then any other unit sorted — never trade order."""
+    order = [u for u in ("SQ", "EA") if u in by_unit] + sorted(u for u in by_unit if u not in ("SQ", "EA"))
+    return [((by_unit[u][0] if len(by_unit[u]) == 1 else round(sum(float(q) for q in by_unit[u]), 4)), u) for u in order]
+
+
+def field_quantities_by_system(result):
+    """THE PER-SYSTEM AUTHORITY for "how much field covering, in which unit" (FRAME v104d, ledger entry 92 §2).
+
+    {system_id: [(qty, unit), ...]} — for each roof system with a field line, ITS field covering's figures, shaped
+    exactly as field_quantities shapes one system's (SQ first, then EA, then any other unit). Systems in sorted id
+    order; empty when there is no field line. A line is a field line when its category is ITS OWN system's field
+    covering (per line, v104c); a merged category is a core id, never a field covering, so it needs no lookup."""
+    by_system = {}
+    for line in getattr(result, "aggregated_scope", None) or ():
+        if not material_splits(line.category_id):
+            continue
+        sysid = line_system(line, "module2_assembly.field_quantities_by_system: a line with no material")
+        if line.category_id == field_category_id(sysid):
+            by_system.setdefault(sysid, {}).setdefault(str(line.unit), []).append(line.qty)
+    return {sysid: _field_unit_order(by_system[sysid]) for sysid in sorted(by_system)}
 
 
 def field_quantities(result):
@@ -1640,17 +1730,24 @@ def field_quantities(result):
     claim carries both. Never raw aggregated_scope order, which is trade order and would make the primary
     figure depend on how the estimate happens to sort. Any other unit follows. Empty when there is no field line.
 
+    FRAME v104d: it DELEGATES to field_quantities_by_system. With one system present it returns exactly that
+    system's figures — its v104c value, byte for byte. With TWO OR MORE it RAISES (RegistryWiringError): a claim-level
+    single figure has no meaning on a mixed roof, so it neither sums shake squares with another covering's nor picks
+    one. Ask field_quantities_by_system instead. The return shape is unchanged (QA §2: it feeds page 2's live tile and
+    page 3's comparison).
+
     Read (through field_summary below) by every copy that used to keep its own loop: pyodide_bridge.js
     _wb_scope_summary (page 2's tile, the LIVE path) and its twin, workbench_seam._receipt_totals,
     verification/workbench_server.py (dev server) and verification/bridge_contract_regression.py's mirror. module3_caller._shake_dual_from_lines is NOT this
     function — it reads serialized report lines; field_quantity_agreement_regression holds the two together."""
-    fid = field_category_id()
-    by_unit = {}
-    for line in getattr(result, "aggregated_scope", None) or ():
-        if line.category_id == fid:
-            by_unit.setdefault(str(line.unit), []).append(line.qty)
-    order = [u for u in ("SQ", "EA") if u in by_unit] + sorted(u for u in by_unit if u not in ("SQ", "EA"))
-    return [((by_unit[u][0] if len(by_unit[u]) == 1 else round(sum(float(q) for q in by_unit[u]), 4)), u) for u in order]
+    by_system = field_quantities_by_system(result)
+    if len(by_system) > 1:
+        raise RegistryWiringError(
+            f"FRAME v104d: module2_assembly.field_quantities — this scope has field covering from "
+            f"{len(by_system)} roof systems ({list(by_system)}), and one claim-level figure would either sum two "
+            f"different coverings or pick one. Fix: read module2_assembly.field_quantities_by_system(result), "
+            f"which answers per system.")
+    return next(iter(by_system.values()), [])
 
 
 def field_summary(result):
@@ -1663,14 +1760,20 @@ def field_summary(result):
                                        aggregated (trade) order, which sorts EA before SQ — so a replacement's SQ
                                        figure, as before. Kept bit-identical because the diagram's independently
                                        summed EA is cross-checked against it; the misleading name is a known-open.
-    """
+      field_by_system                  FRAME v104d: {system_id: [[qty, unit], ...]}, field_quantities_by_system's
+                                       answer in a JSON-plain shape — the per-system figures, beside the existing keys
+                                       (which are unchanged). No surface reads it yet; the bridge is not edited.
+
+    The existing keys are claim-level, so with two or more systems this RAISES through field_quantities (v104d)."""
+    by_system = field_quantities_by_system(result)
     fq = field_quantities(result)
     prim = fq[0] if fq else (None, None)
     alt = fq[1] if len(fq) > 1 else (None, None)
     legacy = next((q for q, u in fq if u == "EA"), fq[0][0] if fq else None)
     return {"field_qty": float(prim[0]) if prim[0] is not None else None, "field_unit": prim[1],
             "field_qty_alt": float(alt[0]) if alt[0] is not None else None, "field_unit_alt": alt[1],
-            "legacy_total_EA": legacy}
+            "legacy_total_EA": legacy,
+            "field_by_system": {sysid: [[q, u] for q, u in v] for sysid, v in by_system.items()}}
 
 
 def _claim_valley_lf_once(geom: EagleViewGeometry, valley_id: str, selected_valley_ids: Sequence[str], claimed: set[str]) -> float:

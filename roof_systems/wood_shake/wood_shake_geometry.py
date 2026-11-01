@@ -159,7 +159,16 @@ def valley_disturbance(event, facet, grid, profile):
 # passes a profile with no system_id, and THIS package — not core — declares it owns them. Retires at Migration
 # Plan step 4, when ProjectConfig supplies the system id. Only the VALLEY strategy crosses the interface in 3b;
 # transition bands and appurtenance rects are still core's bounded branches inside affected_area (3c or later).
+def _expand_scope(iface, *args, **kwargs):
+    """FRAME v104b: the package's scope engine, as registered with core (bridge 6 retired: callers ASK the registry for
+    it). module2_scope_expansion imports THIS module (three_course_extent_ft), so it cannot be imported here at module
+    level without a cycle; the import is at call time, and returns the very function the callers used to import."""
+    from module2_scope_expansion import expand_scope
+    return expand_scope(iface, *args, **kwargs)
+
+
 register(SYSTEM_ID,
          resolve_profile=resolve_shake_measurements,
          disturbance={"VALLEY": valley_disturbance},
+         expand_scope=_expand_scope,
          claims_unlabelled_profiles=True)

@@ -14,7 +14,7 @@ import re
 from typing import Any, Iterable, Mapping, Optional
 
 from shared_category_registry import REGISTRY_28, REGISTRY_SET, REGISTRY_HASH, registry_fingerprint
-from shared_category_registry import field_category_id   # FRAME v98: core asks; the package answers (bridge 4)
+from shared_category_registry import field_category_id, sole_category_package   # FRAME v104c: line-less (bridge 4, narrowed)
 # ONE AUTHORITY for the Remove/Replace rule. consolidate_RR already encodes "keep the Replace/Install
 # side, the Remove side is the same material coming off, Replace >= Remove is expected not a mismatch."
 # The live path imports and USES it rather than re-implementing it — two copies drifting apart is how
@@ -483,7 +483,8 @@ def build_carrier_summary_from_manual_entry(
     then confirmed by the user. This function performs validation and contract
     shaping only; it does not parse documents or infer scope.
     """
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — carrier rows, which have no roof system; no line says which system.
+    _fid = field_category_id(sole_category_package("manual_carrier_entry.build_carrier_summary_from_manual_entry: carrier rows, which have no roof system"))
     if manual_rows is None:
         raise ValueError("manual_rows must be an iterable of row dictionaries")
 

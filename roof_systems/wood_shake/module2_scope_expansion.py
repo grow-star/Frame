@@ -34,6 +34,7 @@ from typing import Mapping, Optional
 
 from shared_category_registry import REGISTRY_28   # authority for a user-supplied OTHER category
 from wood_shake_geometry import three_course_extent_ft    # v90: the ONE transition tie-in extent authority (FRAME v95: package)
+from wood_shake_geometry import SYSTEM_ID as _SYSTEM_ID   # FRAME v104c: the engine stamps its own material on every line
 from scope_contract import (EXPOSURE_IN, SHAKE_WIDTH_IN,   # FRAME v100: the core contract (package imports core)
                             METAL_EXPOSED, METAL_CONCEALED, METAL_NONE, METAL_MEMBRANE, METAL_UNKNOWN,
                             TRANSITION_METAL_VALUES, Edge, Appurt, Transition, M1Interface, ScopeLine)
@@ -348,6 +349,10 @@ def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
         out.append(ScopeLine("High-slope charge", "HIGH_SLOPE_CHARGE", round(sf / 100.0, 4),
                              "SQ", "CONFIRM", "labor standard"))
 
+    # FRAME v104c: every line this engine produces says which roof system produced it. The package knows what it is;
+    # nothing downstream infers it (ScopeLine.material_profile_id — bridge 4's per-line answer).
+    for _line in out:
+        _line.material_profile_id = _SYSTEM_ID
     return out
 
 

@@ -20,7 +20,7 @@ import html
 from module3_render_engine import render
 from package_content import claim_text   # FRAME v101: the package supplies the callout's numbers and text and the §3 title; bridge 5 retired
 from operation_dimension import OP_LABEL, delta_phrase
-from shared_category_registry import field_category_id   # FRAME v98: core asks; the package answers (bridge 4)
+from shared_category_registry import field_category_id, sole_category_package   # FRAME v104c: line-less (bridge 4, narrowed)
 
 # v72 DEFECT 3: platform-specific activity vocabulary. Xactimate and Symbility name the same operation
 # differently; the argument must cite the platform the carrier actually used. UNKNOWN/MANUAL -> not in
@@ -256,7 +256,8 @@ def _replacement_callout(s):
     carrier estimate exists). It does not claim the carrier scoped a slope — that attribution belongs
     to §5, where the carrier's own lines are shown, and is never asserted from the scope side.
     """
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — serialized report lines; no line says which system.
+    _fid = field_category_id(sole_category_package("module3_report_renderer._replacement_callout: serialized report lines"))
     repl = list(s.get("replacement_facets") or [])
     if not repl:
         return ""
@@ -324,7 +325,8 @@ def _shake_count_callout(s, shake_measurements):
     area division (which would net the per-zone ceilings and contradict the table). Renders in the same
     register as the felt block, only when a repair EA line is in scope and the measured profile is
     present (never the defaults)."""
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — serialized report lines; no line says which system.
+    _fid = field_category_id(sole_category_package("module3_report_renderer._shake_count_callout: serialized report lines"))
     by = s.get("required_lines_by_structure") or []
     if by:
         ea_lines = [x for g in by for x in g.get("lines", [])
@@ -361,7 +363,8 @@ def _shake_count_callout(s, shake_measurements):
 
 
 def sec3_shake_analysis(s, shake_measurements=None):
-    _fid = field_category_id()   # FRAME v98: the field-covering id, resolved per call (bridge 4)
+    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — serialized report lines; no line says which system.
+    _fid = field_category_id(sole_category_package("module3_report_renderer.sec3_shake_analysis: serialized report lines"))
     def _row(x):
         # v48 splits chimney flashings by size (Small / Average / Large are three different
         # Xactimate items). Show the code beside the item so the reader can see WHICH is billed.

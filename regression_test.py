@@ -453,7 +453,9 @@ if __name__ == "__main__":
     #    the top of the 3rd course (geometry_core.three_course_extent_ft — 44 in at the 24"/10" defaults),
     #    so a 20 LF transition is 20 x 44/12 = 73.33 SF. (Yager's L33 has fired at 100% since Build 2b; the
     #    synthetic case stays because it isolates the >=95% rule from any real roof.)
-    from module2_scope_expansion import M1Interface as _M1_27, Transition as _Tr_27, expand_scope as _xs_27
+    from scope_contract import M1Interface as _M1_27, Transition as _Tr_27   # FRAME v104b: the contract from core
+    from roof_systems import get as _rs_get, sole_registered_system as _rs_sole   # FRAME v104b: the engine is asked for
+    _xs_27 = _rs_get(_rs_sole("regression_test 27")).expand_scope
     fF=[(0,0),(20,0),(20,8),(0,8)]; fV2=[((0,0),(10,8),+1),((20,0),(10,8),-1)]
     ecT=edge_contacts(fF,fV2,[((0,8),(20,8),'TRANS',20.0)],res=0.04)
     _l27=_xs_27(_M1_27(transitions=[_Tr_27(contact_LF=ecT['TRANS'][0], edge_total_LF=20.0)]))
