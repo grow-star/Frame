@@ -26,10 +26,11 @@ from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequ
 import numpy as np
 
 from candidate_model import Candidate
-from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry
+from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry, _frame_anchor_line   # v105.2: THE ONE anchor rule
 from module1_m2interface import affected_area, build_m1_interface_for_face, edge_contacts, _quiet_import_regression_symbol
 from module1_selected_valley_handoff import selected_valley_handoff
 from scope_contract import Edge, M1Interface, ScopeLine, Transition   # FRAME v104b: the contract from core (the same objects)
+from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
 from module2_scope_expansion import eave_iws_coverage, _eave_iws_citation   # the eave-IWS helpers: not the engine, not dispatched
 # FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired). With a facet in hand, system_for_facet;
 # with none (per-transition, per-edge, per-structure calls), the sole registered system — both v104a's, no third path.
@@ -1442,25 +1443,14 @@ def _candidate_appurtenance_geometry_in_frame(geom: EagleViewGeometry, candidate
 def _face_local_point_to_3d(geom: EagleViewGeometry, face_id: str, x_local: float, y_local: float):
     face = geom.faces[str(face_id)]
     point_ids = geom.ordered_face_point_ids(str(face_id))
-    anchor_line_id = next((lid for lid in face.line_ids if geom.lines[lid].type == "EAVE"), face.line_ids[0])
+    # FRAME v105.2: THE ONE anchor rule (eave, else ridge, else the first edge) — the rule every producer of
+    # facet-local coordinates uses (face_frame, engine_facet, the layout's affine, page 2's tap). This reader used
+    # EAVE-else-first, which mirrored a hand-placed point on a facet with a ridge and no eave.
+    anchor_line_id = _frame_anchor_line(face.line_ids, geom.lines)
     anchor_path = geom.lines[anchor_line_id].path
-    pp = [np.array(geom.points[pid], dtype=float) for pid in point_ids]
-    nrm = np.zeros(3)
-    for i in range(len(pp)):
-        nrm += np.cross(pp[i], pp[(i + 1) % len(pp)])
-    nrm /= np.linalg.norm(nrm)
-    if nrm[2] < 0:
-        nrm = -nrm
-    g = np.array([0.0, 0.0, -1.0])
-    fall = g - np.dot(g, nrm) * nrm
-    fall /= np.linalg.norm(fall)
-    up = -fall
-    x_axis = np.cross(up, nrm)
-    x_axis /= np.linalg.norm(x_axis)
-    er = np.array(geom.points[anchor_path[-1]], dtype=float) - np.array(geom.points[anchor_path[0]], dtype=float)
-    if np.dot(x_axis, er) < 0:
-        x_axis = -x_axis
-    origin = pp[0]
+    # FRAME v105.1: THE ONE fall-line basis (facet_basis.facet_frame_axes), flat facets included.
+    origin, x_axis, up = facet_frame_axes([geom.points[pid] for pid in point_ids],
+                                          geom.points[anchor_path[0]], geom.points[anchor_path[-1]])
     return origin + float(x_local) * x_axis + float(y_local) * up
 
 

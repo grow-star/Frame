@@ -8,6 +8,7 @@ import re
 from math import degrees, atan2
 import numpy as np
 from matplotlib.path import Path
+from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
 
 # FRAME v95 / step 3b: the shake profile (constants, EXP/STEP, resolve_shake_measurements, _profile_units,
 # the tie-in extent, stair_edges) lives in roof_systems/wood_shake/wood_shake_geometry.py. Core never imports
@@ -435,33 +436,11 @@ def getP(txt,ids):
     return P
 
 def mkframe_pts(points3d_order, eave_a, eave_b):
-    """Fall-line frame per rule (D)."""
-    pp=[np.array(p,float) for p in points3d_order]
-    nrm=np.zeros(3)
-    for i in range(len(pp)): nrm+=np.cross(pp[i],pp[(i+1)%len(pp)])
-    nrm/=np.linalg.norm(nrm)
-    if nrm[2]<0: nrm=-nrm
-    g=np.array([0,0,-1.0])
-    fall=g-np.dot(g,nrm)*nrm
-    # FRAME v105: a FLAT facet has no fall line — its normal is (0,0,1), gravity's in-plane part is the ZERO vector,
-    # and normalising it was the NaN Emporia's F11 (pitch 0) produced. The guard tests the RAW vector, before any
-    # divide. Threshold measured, not guessed: flat is exactly 0; the flattest PITCHED facet in any claim is 0.083045
-    # (Killarney, 1/12), eight orders of magnitude above 1e-9. A flat facet's basis comes from its own anchor edge:
-    # x along it (exactly what the pitched branch arranges by flipping x to agree with er), up = cross(nrm, x), so
-    # cross(up, nrm) == x — the pitched branch's own handedness, and no flip is needed.
-    er=np.array(eave_b,float)-np.array(eave_a,float)
-    if np.linalg.norm(fall)<1e-9:
-        x=er/np.linalg.norm(er)
-        up=np.cross(nrm,x)
-    else:
-        fall/=np.linalg.norm(fall)
-        up=-fall
-        x=np.cross(up,nrm); x/=np.linalg.norm(x)
-        if np.dot(x,er)<0: x=-x
-    O=pp[0]
+    """Fall-line frame per rule (D). FRAME v105.1: the basis is facet_basis.facet_frame_axes — THE ONE copy, flat
+    facets included (v105 guarded it here only; four other copies still divided by a zero fall)."""
+    O,x,up=facet_frame_axes(points3d_order, eave_a, eave_b)
     return lambda p3: np.array([np.dot(np.array(p3,float)-O,x),
                                 np.dot(np.array(p3,float)-O,up)])
-
 
 def excluded_region_aware_notch_fan(facet, holes, seg_a, seg_b, band=2.0, reach=8.0, res=0.4):
     """Excluded-region-aware notch fan (general, topology-driven).

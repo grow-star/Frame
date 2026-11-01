@@ -20,6 +20,7 @@ import numpy as np
 import math
 from transition_enumerator import confirmed_transitions, enumerate_transition_candidates
 from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry, _frame_anchor_line
+from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
 
 Point2List = list[float]
 
@@ -178,23 +179,9 @@ def _local_to_shared_transform(
     eave_b: Sequence[float],
 ) -> Callable[[Sequence[float]], Point2List]:
     """Return the bridge from engine facet-local coordinates to shared roof x/y."""
-    pp = [np.asarray(p, dtype=float) for p in points3d_order]
-    nrm = np.zeros(3, dtype=float)
-    for i in range(len(pp)):
-        nrm += np.cross(pp[i], pp[(i + 1) % len(pp)])
-    nrm /= np.linalg.norm(nrm)
-    if nrm[2] < 0:
-        nrm = -nrm
-    g = np.array([0.0, 0.0, -1.0])
-    fall = g - np.dot(g, nrm) * nrm
-    fall /= np.linalg.norm(fall)
-    up = -fall
-    x_axis = np.cross(up, nrm)
-    x_axis /= np.linalg.norm(x_axis)
-    er = np.asarray(eave_b, dtype=float) - np.asarray(eave_a, dtype=float)
-    if np.dot(x_axis, er) < 0:
-        x_axis = -x_axis
-    origin = pp[0]
+    # FRAME v105.1: THE ONE fall-line basis (facet_basis.facet_frame_axes). This copy was the field failure: on a flat
+    # facet it divided by a zero fall and page 1 handed page 2 bare NaN ("origin": [NaN, NaN]).
+    origin, x_axis, up = facet_frame_axes(points3d_order, eave_a, eave_b)
 
     def to_shared(local_point: Sequence[float]) -> Point2List:
         u = float(local_point[0])
