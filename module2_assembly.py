@@ -34,7 +34,7 @@ from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line bas
 from module2_scope_expansion import eave_iws_coverage, _eave_iws_citation   # the eave-IWS helpers: not the engine, not dispatched
 # FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired). With a facet in hand, system_for_facet;
 # with none (per-transition, per-edge, per-structure calls), the sole registered system — both v104a's, no third path.
-from roof_systems import get as roof_system, sole_registered_system, system_for_facet
+from roof_systems import get as roof_system, system_for_facet, system_for_facets   # FRAME v105.3: never the SOLE system
 from candidate_emitters import emit_valley_candidates          # v93: THE valley facet-pair source (bordering_roof_face_ids)
 from operation_dimension import R_AND_R, REPLACE                  # v93: the canonical operation constants
 from transition_events import (
@@ -62,6 +62,9 @@ class EdgeContribution:
     contact_LF: float
     edge_total_LF: float
     component: str
+    # FRAME v105.3: the roof system of the facet(s) that contributed this edge — stamped where the component's face id
+    # is in hand (never looked up from the line). The per-edge scope line is expanded by THIS system's engine.
+    system_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -474,14 +477,25 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             )
             for t in active_transitions
         ]
+        # FRAME v105.3: each transition's engine is ITS facets' roof system (they must agree — a boundary raises). The
+        # transitions are grouped by system in first-appearance order, each group expanded once, and concatenated; with
+        # one system that is one group, the same list in the same order. The expander treats transitions independently
+        # (the flash probe below expands them one at a time).
+        _trans_sys = [system_for_facets((t.face_a_id, t.face_b_id), confirmed_selection,
+                                        f"module2_assembly: the roof-level transition {t.edge_id}")
+                      for t in active_transitions]
+        _trans_groups: Dict[str, List[Transition]] = {}
+        for _sys, tr in zip(_trans_sys, transitions_for_scope):
+            _trans_groups.setdefault(_sys, []).append(tr)
         transition_scope_lines = tuple(
-            roof_system(sole_registered_system("module2_assembly: the roof-level transition lines")).expand_scope(M1Interface(transitions=transitions_for_scope, **_iface_profile(shake_measurements)),
-                         repair_factor=1.0))
+            l for _sys, _trs in _trans_groups.items()
+            for l in roof_system(_sys).expand_scope(M1Interface(transitions=_trs, **_iface_profile(shake_measurements)),
+                                                    repair_factor=1.0))
         # v93: which of these transitions actually BILL flashing — asked of the same emission authority, one
         # transition at a time, so a transition answered NONE / MEMBRANE (no flashing line) casts no vote.
         _flash_edges = [
-            t for t, tr in zip(active_transitions, transitions_for_scope)
-            if any(l.category_id == "TRANSITION_FLASH" for l in roof_system(sole_registered_system("module2_assembly: the transition-flash probe")).expand_scope(
+            t for t, tr, _sys in zip(active_transitions, transitions_for_scope, _trans_sys)
+            if any(l.category_id == "TRANSITION_FLASH" for l in roof_system(_sys).expand_scope(
                 M1Interface(transitions=[tr], **_iface_profile(shake_measurements)), repair_factor=1.0))]
     else:
         _flash_edges = []
@@ -514,7 +528,10 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
                     continue                # same physical object -> its material line is already billed
                 _seen_appurt_groups.add(key)
             non_edge_lines.append(line)
-        all_edge_contribs.extend(comp.edge_contributions)
+        # FRAME v105.3: stamp each edge contribution with its component's roof system, where the face id is in hand.
+        if comp.edge_contributions:
+            _csys = system_for_facet(comp.face_id, confirmed_selection)
+            all_edge_contribs.extend(replace(c, system_id=_csys) for c in comp.edge_contributions)
 
     deduped_edge_contribs = _dedupe_edge_contributions(all_edge_contribs)
     deduped_edges = [Edge(c.edge_type, c.contact_LF, c.edge_total_LF) for c in deduped_edge_contribs]
@@ -804,7 +821,12 @@ def _edge_lines_with_ridge_vents(contribs, ridge_vents: Mapping[str, Mapping[str
     out = []
     for contrib in contribs:
         edge = Edge(contrib.edge_type, contrib.contact_LF, contrib.edge_total_LF)
-        lines = list(roof_system(sole_registered_system("module2_assembly: a per-edge line")).expand_scope(M1Interface(edges=[edge]), repair_factor=1.0))
+        # FRAME v105.3: the edge's own roof system, stamped on the contribution at its component.
+        if not contrib.system_id:
+            raise RegistryWiringError(
+                f"FRAME: edge {contrib.line_id}'s contribution carries no roof system — it must be stamped where its "
+                f"component's face id is in hand (v105.3).")
+        lines = list(roof_system(contrib.system_id).expand_scope(M1Interface(edges=[edge]), repair_factor=1.0))
         vent = ridge_vents.get(str(contrib.line_id)) if contrib.edge_type == "RIDGE" else None
         if not vent:
             out.extend(lines)
@@ -1144,12 +1166,20 @@ def _dedupe_edge_contributions(contribs: Sequence[EdgeContribution]) -> Tuple[Ed
         if prior is None:
             by_line[contrib.line_id] = contrib
             continue
+        # FRAME v105.3: two facets contributing ONE edge must carry ONE roof system. If they differ, the edge is a SYSTEM
+        # BOUNDARY — what it bills is each system's own termination (Joseph, 2026-11-01), which core will not guess.
+        if prior.system_id != contrib.system_id:
+            raise RegistryWiringError(
+                f"FRAME: edge {contrib.line_id} is shared by facets carrying DIFFERENT roof systems "
+                f"({' / '.join(sorted((prior.system_id, contrib.system_id)))}). That edge is a SYSTEM BOUNDARY: what it "
+                f"bills is each system's own termination, which core will not guess. (v105.3)")
         by_line[contrib.line_id] = EdgeContribution(
             line_id=contrib.line_id,
             edge_type=prior.edge_type,
             contact_LF=max(prior.contact_LF, contrib.contact_LF),
             edge_total_LF=max(prior.edge_total_LF, contrib.edge_total_LF),
             component=";".join(sorted(set(prior.component.split(";") + contrib.component.split(";")))),
+            system_id=prior.system_id,
         )
     return tuple(sorted(by_line.values(), key=lambda c: _id_sort_key(c.line_id)))
 
@@ -1530,6 +1560,7 @@ def _aggregate_by_structure(geom: EagleViewGeometry, components, confirmed_selec
         comps_by_structure.setdefault(_structure_of_face(geom, comp.face_id), []).append(comp)
 
     trans_by_structure: "MutableMapping[str, List]" = {}
+    trans_sys_by_structure: "MutableMapping[str, List[str]]" = {}        # FRAME v105.3: each transition's roof system
     _profile = _shake_measurements_from_selection(confirmed_selection)   # v90: same profile the bands used
     if active_transitions:
         selected_ids = set(selected_transition_repairs(confirmed_selection))
@@ -1538,6 +1569,8 @@ def _aggregate_by_structure(geom: EagleViewGeometry, components, confirmed_selec
         valley_ids = [str(v) for v in (confirmed_selection.get("selected_valley_ids", ()) or ())]
         for t in active_transitions:
             sid = _structure_of_face(geom, t.face_a_id)
+            trans_sys_by_structure.setdefault(sid, []).append(system_for_facets(
+                (t.face_a_id, t.face_b_id), confirmed_selection, f"module2_assembly: the per-structure transition {t.edge_id}"))
             trans_by_structure.setdefault(sid, []).append(Transition(
                 contact_LF=transition_contact_lf(geom, t, valley_ids),
                 edge_total_LF=float(t.edge_total_LF),
@@ -1561,12 +1594,20 @@ def _aggregate_by_structure(geom: EagleViewGeometry, components, confirmed_selec
                         continue
                     seen_appurt.add(key)
                 non_edge.append(line)
-            edge_contribs.extend(comp.edge_contributions)
+            # FRAME v105.3: stamped exactly as at the roof level — the component's face id is in hand.
+            if comp.edge_contributions:
+                _csys = system_for_facet(comp.face_id, confirmed_selection)
+                edge_contribs.extend(replace(c, system_id=_csys) for c in comp.edge_contributions)
         deduped = _dedupe_edge_contributions(edge_contribs)
         edge_lines = _edge_lines_with_ridge_vents(deduped, _ridge_vents(confirmed_selection))
-        trans_lines = (tuple(roof_system(sole_registered_system("module2_assembly: a per-structure transition line")).expand_scope(M1Interface(transitions=trans_by_structure[sid],
-                                                      **_iface_profile(_profile)), repair_factor=1.0))
-                       if trans_by_structure.get(sid) else ())
+        # FRAME v105.3: grouped by roof system in first-appearance order, as at the roof level — one group, one list,
+        # the same order, when there is one system.
+        _groups: Dict[str, List[Transition]] = {}
+        for _sys, tr in zip(trans_sys_by_structure.get(sid, ()), trans_by_structure.get(sid, ())):
+            _groups.setdefault(_sys, []).append(tr)
+        trans_lines = tuple(l for _sys, _trs in _groups.items()
+                            for l in roof_system(_sys).expand_scope(M1Interface(transitions=_trs, **_iface_profile(_profile)),
+                                                                    repair_factor=1.0))
         out.append((sid, tuple(_aggregate_lines([*non_edge, *edge_lines, *trans_lines]))))
     return tuple(out)
 

@@ -196,6 +196,28 @@ def system_for_facet(face_id, confirmed_selection):
     return sole_registered_system(f"system_for_facet({str(face_id)!r})")
 
 
+def system_for_facets(face_ids, confirmed_selection, context="a scope call spanning several facets"):
+    """THE roof system shared by SEVERAL facets (FRAME v105.3) — system_for_facet applied to each, and they must AGREE.
+
+    One authority: every facet resolves through system_for_facet (the three steps are not re-implemented here). One
+    distinct answer is returned. More than one RAISES RegistryWiringError naming every facet and its system: an object
+    spanning facets of different systems sits on a SYSTEM BOUNDARY, and what a boundary bills is each system's own
+    termination (Joseph, 2026-11-01) — a domain rule the packages own, which core will not guess. No facets RAISES: an
+    empty question has no answer. It never reads how many systems are registered, so it is correct at any count."""
+    ids = [str(f) for f in face_ids]
+    if not ids:
+        raise RegistryWiringError(f"FRAME: {context} — no facets were given, so there is no roof system to resolve.")
+    per = [(f, system_for_facet(f, confirmed_selection)) for f in ids]
+    distinct = list(dict.fromkeys(s for _f, s in per))
+    if len(distinct) == 1:
+        return distinct[0]
+    raise RegistryWiringError(
+        f"FRAME: {context} spans facets carrying DIFFERENT roof systems ("
+        + ", ".join(f"{f}: {s}" for f, s in per)
+        + "). That is a SYSTEM BOUNDARY: what it bills is each system's own termination, which core will not guess. "
+          "(v105.3)")
+
+
 def sole_registered_system(context="a scope call with no facet in hand"):
     """THE SOLE registered roof system — system_for_facet's third step, named so that a caller with NO face id in hand
     (FRAME v104b: a per-edge or per-transition scope call, the oracle's fixture) resolves by the SAME rule rather than
