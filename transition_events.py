@@ -18,7 +18,8 @@ This module adds only what Path B needs:
 
   2. THE BAND GEOMETRY (§3), per CSSB Figure 10:
        UPPER slope: THREE COURSES up-slope from the shared edge, to the TOP of the 3rd course —
-                    geometry_core.three_course_extent_ft() = (2 x exposure + length) / 12; 44 in at
+                    the profile's own package's course_top_ft (FRAME v105.4, via the registry; wood shake:
+                    (2 x exposure + length) / 12); 44 in at
                     the 24 in / 10 in defaults (v90, Joseph 2026-10-17; was a fixed 36 in CSSB 914 mm
                     strip). You cannot install the tie-in beneath courses you have not lifted.
        LOWER slope: ONE (1) COURSE down-slope — a course-lap requirement, specified in courses and
@@ -35,7 +36,7 @@ from __future__ import annotations
 
 from typing import List, Mapping, Optional, Sequence
 
-from wood_shake_geometry import resolve_shake_measurements, three_course_extent_ft   # FRAME v95: package-owned
+from roof_systems import course_top_ft, system_for_profile   # FRAME v105.4: the profile's OWN package answers (no package import)
 from scope_contract import METAL_EXPOSED, METAL_MEMBRANE, TRANSITION_METAL_VALUES   # FRAME v100: the contract's core home (was module2_scope_expansion)
 from transition_enumerator import confirmed_transitions, transition_contact_readings
 
@@ -302,7 +303,7 @@ def transition_band_for_face(geom, transition, face_id: str,
     Elevation is the only honest test.)
 
     The band is then aimed INTO the facet from the edge: up-slope (+y) three courses (to the top of
-    the 3rd course, three_course_extent_ft) on the upper facet,
+    the 3rd course — the profile's own package's course_top_ft, at its own tie-in count) on the upper facet,
     down-slope (-y) one course on the lower one. It is clipped to the facet by affected_area, so a
     short upper slope simply yields a shorter band rather than spilling off the roof.
     """
@@ -318,12 +319,15 @@ def transition_band_for_face(geom, transition, face_id: str,
         raise ValueError(f"{face_id} is not a facet of transition {transition.edge_id}")
     is_upper = str(face_id) == upper_face_id(geom, transition)
 
-    prof = resolve_shake_measurements(shake_measurements)
+    # FRAME v105.4: the profile's OWN package resolves it, and answers for its own course geometry.
+    system = system_for_profile(shake_measurements)
+    prof = system.resolve_profile(shake_measurements)
     course_ft = float(prof["exposure_in"]) / 12.0
 
     if is_upper:
         # UPPER slope — to the TOP of the 3rd course, measured UP-slope from the edge (v90; was 36 in).
-        band = {"x0": x_lo, "x1": x_hi, "y0": edge_y, "y1": edge_y + three_course_extent_ft(shake_measurements), "side": UPPER}
+        band = {"x0": x_lo, "x1": x_hi, "y0": edge_y, "y1": edge_y + course_top_ft(system.system_id, shake_measurements),
+                "side": UPPER}
     else:
         # LOWER slope — ONE course measured DOWN-slope from the edge (course-lap requirement).
         band = {"x0": x_lo, "x1": x_hi, "y0": edge_y - LOWER_BAND_COURSES * course_ft,

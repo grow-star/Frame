@@ -35,6 +35,7 @@ from module2_scope_expansion import eave_iws_coverage, _eave_iws_citation   # th
 # FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired). With a facet in hand, system_for_facet;
 # with none (per-transition, per-edge, per-structure calls), the sole registered system — both v104a's, no third path.
 from roof_systems import get as roof_system, system_for_facet, system_for_facets   # FRAME v105.3: never the SOLE system
+from roof_systems import system_for_profile   # FRAME v105.4: the profile's OWN package resolves it
 from candidate_emitters import emit_valley_candidates          # v93: THE valley facet-pair source (bordering_roof_face_ids)
 from operation_dimension import R_AND_R, REPLACE                  # v93: the canonical operation constants
 from transition_events import (
@@ -157,7 +158,6 @@ class RoofAssemblyResult:
 mkframe_pts = _quiet_import_regression_symbol("mkframe_pts")
 appurtenance_zone_geometry = _quiet_import_regression_symbol("appurtenance_zone_geometry")   # FRAME v102: the TYPE decides the zone
 appurtenance_zone_holes = _quiet_import_regression_symbol("appurtenance_zone_holes")         # FRAME v103: a point zone is not carved by its own hole
-from wood_shake_geometry import resolve_shake_measurements   # FRAME v95: package-owned (was via geometry_core)
 
 _EDGE_DRIVEN_CATEGORIES = {
     "RIDGE_CAPS",
@@ -171,7 +171,7 @@ _EDGE_DRIVEN_CATEGORIES = {
 
 def _shake_measurements_from_selection(confirmed_selection: Mapping[str, object]) -> Mapping[str, object]:
     raw = confirmed_selection.get("shake_measurements") or confirmed_selection.get("shake_profile") or {}
-    return resolve_shake_measurements(raw)
+    return system_for_profile(raw).resolve_profile(raw)
 
 
 def _iface_profile(shake_measurements: Mapping[str, object]) -> Mapping[str, float]:

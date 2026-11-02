@@ -167,8 +167,18 @@ def _expand_scope(iface, *args, **kwargs):
     return expand_scope(iface, *args, **kwargs)
 
 
+def _course_top_ft(profile, courses=None):
+    """FRAME v105.4: wood shake's OWN course geometry, as registered with core — the top of course n is (n-1) x exposure
+    + the piece length (three_course_extent_ft's arithmetic). `courses=None` is this package's own tie-in count,
+    TIE_IN_COURSES, which stays here as the default; a caller with its own ruling passes an explicit count."""
+    prof = resolve_shake_measurements(profile)
+    n = TIE_IN_COURSES if courses is None else int(courses)
+    return ((n - 1) * float(prof["exposure_in"]) + float(prof["length_in"])) / 12.0
+
+
 register(SYSTEM_ID,
          resolve_profile=resolve_shake_measurements,
          disturbance={"VALLEY": valley_disturbance},
          expand_scope=_expand_scope,
-         claims_unlabelled_profiles=True)
+         claims_unlabelled_profiles=True,
+         course_top_ft=_course_top_ft)

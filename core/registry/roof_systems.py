@@ -57,7 +57,8 @@ FacetGrid = namedtuple("FacetGrid", "gx gy X Y")
 # FRAME v104b: `expand_scope` — the package's scope engine — is a REQUIRED registration field. The engine is ASKED FOR
 # (get(system_id).expand_scope), never imported by name: that retires bridge 6 ("the scope engine is called, not
 # dispatched"). With one package registered, dispatch resolves to the very same function the imports reached.
-RoofSystem = namedtuple("RoofSystem", "system_id resolve_profile disturbance claims_unlabelled_profiles expand_scope")
+RoofSystem = namedtuple("RoofSystem", "system_id resolve_profile disturbance claims_unlabelled_profiles expand_scope "
+                                       "course_top_ft", defaults=(None,))   # FRAME v105.4: course_top_ft OPTIONAL
 
 
 class RoofSystemRegistryError(LookupError):
@@ -69,9 +70,15 @@ _SYSTEMS: "dict[str, RoofSystem]" = {}
 _UNLABELLED_CLAIMANT = None
 
 
-def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_unlabelled_profiles=False):
+def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_unlabelled_profiles=False,
+             course_top_ft=None):
     """Called BY a package, at its own import. Idempotent for an identical registration. A second, DIFFERENT
-    registration of one id raises (one rule, one home), as does a second claimant of unlabelled profiles."""
+    registration of one id raises (one rule, one home), as does a second claimant of unlabelled profiles.
+
+    FRAME v105.4: `course_top_ft(profile, courses=None) -> feet` is OPTIONAL — the package's own course geometry, the
+    height to the top of course `courses` (None = the package's own tie-in count). A covering that is not coursed (a
+    membrane, a standing-seam panel) has no honest answer and declines by omitting it; asking it then RAISES, named
+    (see course_top_ft below). Like expand_scope, it joins the idempotency comparison."""
     global _UNLABELLED_CLAIMANT
     if not isinstance(system_id, str) or not system_id.strip():
         raise ValueError(f"system_id must be a non-empty string; got {system_id!r}")
@@ -79,6 +86,8 @@ def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_un
         raise TypeError(f"{system_id}: resolve_profile must be callable")
     if not callable(expand_scope):
         raise TypeError(f"{system_id}: expand_scope must be callable (the package's scope engine — FRAME v104b)")
+    if course_top_ft is not None and not callable(course_top_ft):
+        raise TypeError(f"{system_id}: course_top_ft must be callable when declared (FRAME v105.4), or omitted")
     if not isinstance(disturbance, Mapping) or not disturbance:
         raise TypeError(f"{system_id}: disturbance must be a non-empty mapping of event type -> strategy")
     unknown = sorted(set(disturbance) - EVENT_TYPES)
@@ -88,13 +97,14 @@ def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_un
         if not callable(fn):
             raise TypeError(f"{system_id}: disturbance[{ev!r}] must be callable")
     entry = RoofSystem(system_id, resolve_profile, MappingProxyType(dict(disturbance)),
-                       bool(claims_unlabelled_profiles), expand_scope)
+                       bool(claims_unlabelled_profiles), expand_scope, course_top_ft)
     existing = _SYSTEMS.get(system_id)
     if existing is not None:
         if (existing.resolve_profile is entry.resolve_profile
                 and dict(existing.disturbance) == dict(entry.disturbance)
                 and existing.claims_unlabelled_profiles == entry.claims_unlabelled_profiles
-                and existing.expand_scope is entry.expand_scope):
+                and existing.expand_scope is entry.expand_scope
+                and existing.course_top_ft is entry.course_top_ft):
             return existing
         raise RoofSystemRegistryError(
             f"roof system {system_id!r} is already registered with different strategies — two homes for one "
@@ -132,6 +142,20 @@ def get(system_id):
             f"FRAME wiring: no roof-system package registered system_id {system_id!r}. Registered: "
             f"{list(registered())}. Fix: import that system's package module, or correct the profile's "
             f"system_id.") from None
+
+
+def course_top_ft(system_id, profile, courses=None):
+    """FRAME v105.4: the height, in FEET, to the top of course `courses` — answered by THAT system's own package (each
+    package answers for its own course geometry; core holds no course arithmetic). `courses=None` asks for the
+    package's OWN tie-in count; a caller with a ruling of its own (the membrane manufacturer's count, entry 104) passes
+    it explicitly. A package that declared no course geometry RAISES, named: a non-coursed covering cannot answer."""
+    entry = get(system_id)
+    if entry.course_top_ft is None:
+        raise RegistryWiringError(
+            f"FRAME: roof system {system_id!r} declares no course geometry (course_top_ft), so it cannot say where the "
+            f"top of a course is — a covering that is not coursed has no answer. Fix: ask the coursed system, or have "
+            f"the package declare course_top_ft at registration. (v105.4)")
+    return entry.course_top_ft(profile, courses)
 
 
 def system_for_profile(profile):

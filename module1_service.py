@@ -40,7 +40,7 @@ from module1_selected_valley_handoff import selected_valley_handoff
 from scope_contract import M1Interface   # FRAME v104b: the contract from core (the same object)
 from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
 # FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired) — v104a's resolvers, no third path.
-from roof_systems import get as roof_system, sole_registered_system, system_for_facet
+from roof_systems import get as roof_system, sole_registered_system, system_for_facet, system_for_profile   # v105.4
 from notch_candidate_emitter import emit_notch_candidates
 
 
@@ -68,13 +68,13 @@ affected_area = _engine.affected_area
 mkframe_pts = _engine.mkframe_pts
 appurtenance_zone_geometry = _engine.appurtenance_zone_geometry   # FRAME v102: the TYPE decides the zone
 appurtenance_zone_holes = _engine.appurtenance_zone_holes         # FRAME v103: a point zone is not carved by its own hole
-from wood_shake_geometry import resolve_shake_measurements   # FRAME v103: entry 78 — the diagram threads the job's measured
-                                                               # shake profile exactly as the scope does (module2_assembly)
+import wood_shake_geometry  # noqa: F401  FRAME v105.4: imported ONLY to register the package (A11) — no function is
+                            # imported; the profile's own package resolves it through the registry (system_for_profile)
 
 
 def _shake_measurements_from_selection(confirmed_selection: Mapping[str, object]) -> Mapping[str, object]:
     raw = confirmed_selection.get("shake_measurements") or confirmed_selection.get("shake_profile") or {}
-    return resolve_shake_measurements(raw)
+    return system_for_profile(raw).resolve_profile(raw)
 
 
 @dataclass(frozen=True)
