@@ -87,8 +87,13 @@ def emit_transition_candidates(geom: EagleViewGeometry) -> List[Candidate]:
     """Wrap existing TransitionCandidate fields into the common candidate envelope."""
     out: List[Candidate] = []
     for transition in enumerate_transition_candidates(geom):
-        if geom.lines[transition.edge_id].type == "VALLEY":
-            continue
+        # FRAME v106.3 — THE SECOND VALLEY FILTER IS GONE, and it was dead. It read `type == "VALLEY"`
+        # here while the enumerator reads `"VALLEY" in type.upper()` — two non-equivalent copies of one
+        # rule — and because the enumerator drops every valley-typed edge BEFORE this loop sees it, this
+        # filter had nothing to drop: measured, zero of 152 candidates on six real claims. Deleting it
+        # does not relax anything; what it removes is a guard that looks like one, disagrees with the real
+        # one, and would wake up with the wrong semantics the moment the enumerator's exclusion changes.
+        # The decision belongs to transition_enumerator (is_valley_typed / transition_for_pair) alone.
         out.append(Candidate(
             kind="transition",
             source_ids=(transition.edge_id, transition.face_a_id, transition.face_b_id),

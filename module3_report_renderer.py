@@ -20,7 +20,7 @@ import html
 from module3_render_engine import render
 from package_content import claim_text   # FRAME v101: the package supplies the callout's numbers and text and the §3 title; bridge 5 retired
 from operation_dimension import OP_LABEL, delta_phrase
-from shared_category_registry import field_category_id, sole_category_package   # FRAME v104c: line-less (bridge 4, narrowed)
+from shared_category_registry import field_category_ids   # FRAME v106.4: bridge 4 RETIRED at all three line-less sites — membership, no package picked
 
 # v72 DEFECT 3: platform-specific activity vocabulary. Xactimate and Symbility name the same operation
 # differently; the argument must cite the platform the carrier actually used. UNKNOWN/MANUAL -> not in
@@ -256,19 +256,35 @@ def _replacement_callout(s):
     carrier estimate exists). It does not claim the carrier scoped a slope — that attribution belongs
     to §5, where the carrier's own lines are shown, and is never asserted from the scope side.
     """
-    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — serialized report lines; no line says which system.
-    _fid = field_category_id(sole_category_package("module3_report_renderer._replacement_callout: serialized report lines"))
+    # FRAME v106.4: BRIDGE 4 RETIRED HERE — membership, no package picked. The only question this site asks
+    # is "which of these serialized lines is a FIELD covering?", and membership answers it at any package
+    # count. (Was v104c: field_category_id(sole_category_package(...)), which raised the moment a second
+    # package registered.)
+    #
+    # A MIXED ROOF HAS ONE FIELD SQ LINE PER SYSTEM, and they are different materials at different prices, so
+    # a single merged total would be a figure the reader has to split back apart. Each is named by its own
+    # item text instead. The facets are listed ONCE, not per system: an aggregated line carries no facet
+    # list, so attributing F10/F11 to one material and the rest to the other would be asserting something
+    # these rows do not say.
+    #
+    # With exactly ONE field SQ line the output is BYTE-IDENTICAL to the v106.4 baseline — which the 84 frozen renders
+    # require, and which is every single-covering claim.
+    _fids = frozenset(field_category_ids())
     repl = list(s.get("replacement_facets") or [])
     if not repl:
         return ""
     rep = list(s.get("repair_facets") or [])
     lines = s.get("required_lines", [])
-    sq = next((x for x in lines if x.get("category_id") == _fid and x.get("unit") == "SQ"), None)
-    ea = next((x for x in lines if x.get("category_id") == _fid and x.get("unit") == "EA"), None)
+    sqs = sorted((x for x in lines if x.get("category_id") in _fids and x.get("unit") == "SQ"),
+                 key=lambda x: str(x.get("category_id")))
+    ea = next((x for x in lines if x.get("category_id") in _fids and x.get("unit") == "EA"), None)
     fac = lambda names: ", ".join(e(str(n)) for n in names)
     parts = []
-    if sq is not None:
-        parts.append(f"<strong>Slope replacement</strong> (facets {fac(repl)}): {e(sq['qty'])} SQ")
+    if len(sqs) == 1:
+        parts.append(f"<strong>Slope replacement</strong> (facets {fac(repl)}): {e(sqs[0]['qty'])} SQ")
+    elif sqs:
+        parts.append(f"<strong>Slope replacement</strong> (facets {fac(repl)}): "
+                     + " &nbsp;+&nbsp; ".join(f"{e(x['qty'])} SQ {e(x['item'])}" for x in sqs))
     if ea is not None and rep:
         parts.append(f"<strong>Slope repair</strong> (facets {fac(rep)}): {e(ea['qty'])} EA")
     head = " &nbsp;|&nbsp; ".join(parts) if parts else f"Slope replacement (facets {fac(repl)})"
@@ -325,15 +341,23 @@ def _shake_count_callout(s, shake_measurements):
     area division (which would net the per-zone ceilings and contradict the table). Renders in the same
     register as the felt block, only when a repair EA line is in scope and the measured profile is
     present (never the defaults)."""
-    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — serialized report lines; no line says which system.
-    _fid = field_category_id(sole_category_package("module3_report_renderer._shake_count_callout: serialized report lines"))
+    # FRAME v106.4: BRIDGE 4 RETIRED HERE — membership, no package picked. Behaviour-identical today, and
+    # the reason is a property of the materials rather than luck: this callout reads field-covering lines in
+    # **EA**, and only a COURSED covering bills EA. A membrane has no courses and bills SQ always (MODBIT's
+    # engine emits no EA line at all), so the EA field lines on any roof are the coursed system's. The
+    # callout then divides by that profile's width/exposure and returns "" without a measured profile.
+    #
+    # LOGGED, not claimed clean: if a future package ever bills its field in EA, membership would hand its
+    # line to shake's arithmetic. The proper retirement is carrying ScopeLine.material_profile_id through
+    # report-line serialization — v104c named it, and these rows still drop it — which is its own build.
+    _fids = frozenset(field_category_ids())
     by = s.get("required_lines_by_structure") or []
     if by:
         ea_lines = [x for g in by for x in g.get("lines", [])
-                    if x.get("category_id") == _fid and x.get("unit") == "EA"]
+                    if x.get("category_id") in _fids and x.get("unit") == "EA"]
     else:
         ea_lines = [x for x in s.get("required_lines", [])
-                    if x.get("category_id") == _fid and x.get("unit") == "EA"]
+                    if x.get("category_id") in _fids and x.get("unit") == "EA"]
     if not ea_lines:
         return ""
     sm = shake_measurements if isinstance(shake_measurements, dict) else {}
@@ -364,7 +388,9 @@ def _shake_count_callout(s, shake_measurements):
 
 def sec3_shake_analysis(s, shake_measurements=None):
     # FRAME v104c: LINE-LESS (bridge 4, narrowed) — serialized report lines; no line says which system.
-    _fid = field_category_id(sole_category_package("module3_report_renderer.sec3_shake_analysis: serialized report lines"))
+    # FRAME v106.4: BRIDGE 4 RETIRED HERE — membership, no package picked. Same EA reasoning as
+    # _shake_count_callout above: only a coursed covering bills its field in EA.
+    _fids = frozenset(field_category_ids())
     def _row(x):
         # v48 splits chimney flashings by size (Small / Average / Large are three different
         # Xactimate items). Show the code beside the item so the reader can see WHICH is billed.
@@ -390,7 +416,7 @@ def sec3_shake_analysis(s, shake_measurements=None):
     # repair EA line is actually in scope: repair-only and mixed keep it (attached to the EA line and
     # its facet set), replacement-only omits it entirely and leads with the replacement callout.
     _lines = s.get("required_lines", [])
-    has_repair_ea = any(x.get("category_id") == _fid and x.get("unit") == "EA" for x in _lines)
+    has_repair_ea = any(x.get("category_id") in _fids and x.get("unit") == "EA" for x in _lines)
     blocks = s.get("structure_blocks") or []
     if blocks:
         # v69 DEFECT 2: with more than one structure, the affected-area / shake-quantity callout is
@@ -417,7 +443,41 @@ def sec3_shake_analysis(s, shake_measurements=None):
             f"{replacement_html}{_felt_interlayment_callout(s)}{_eave_iws_callout(s)}"
             f"<table class='data'><thead><tr><th>Required item</th><th>Qty</th><th>Unit</th></tr></thead>"
             f"<tbody>{lines}</tbody></table>"
+            f"{_excluded_facet_callout(s)}"
             f"<p class='note'>Authorities: {', '.join(e(c) for c in s.get('citations', []))}</p>")
+
+
+def _excluded_facet_callout(s):
+    """FRAME v106.1 — SAY WHAT THIS SCOPE DOES NOT COVER, AND HOW MUCH.
+
+    A facet carrying another roof system is excluded from the material list, which SUBTRACTS area the
+    reader would otherwise expect. This file's neighbour in module2_assembly states the rule: an
+    over-scope is visible and correctable; an under-scope is not. So the subtraction is printed, with the
+    facet, the edge that reached it and the area withheld (Killarney F36: 5.6112 SF across L24 and L34).
+
+    Carrier-facing wording: it states a fact about the ROOF, not about the tool's uncertainty. Empty for
+    every claim that excludes nothing, so those reports render byte-identically.
+    """
+    rows = s.get("system_boundary_disclosures") or []
+    if not rows:
+        return ""
+    items = "".join(
+        f"<li>{e(_facet_label(d))} &mdash; <strong>{e(d.get('dropped_SF'))} SF</strong> of tie-in area at "
+        f"{e(d.get('edge_id'))}, not included.</li>"
+        for d in rows)
+    total = sum(float(d.get("dropped_SF") or 0.0) for d in rows)
+    return (f"<div class='callout'><p><strong>Not included in this scope:</strong> the following "
+            f"{'facet carries' if len(rows) == 1 else 'facets carry'} a different roof system and "
+            f"{'is' if len(rows) == 1 else 'are'} scoped separately.</p>"
+            f"<ul>{items}</ul>"
+            f"<p class='note'>Total area excluded: {total:.4f} SF. The transition flashing along the shared "
+            f"edge IS included above &mdash; it is installed by the trade replacing the scoped slope.</p></div>")
+
+
+def _facet_label(d):
+    """'Facet AP (F36)' when the designator is known, else 'Facet F36'."""
+    des, fid = (d.get("designator") or "").strip(), str(d.get("face_id") or "")
+    return f"Facet {des} ({fid})" if des else f"Facet {fid}"
 
 
 def _eave_iws_callout(s):

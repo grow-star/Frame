@@ -14,6 +14,63 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from eagleview_geometry_parser import EagleViewGeometry
 from facet_basis import facet_fall_xy
 
+_FLAT_FALL_TOL = 1e-9
+
+
+def rise_above_edge(geom, edge_line_id, face_id) -> float:
+    """How far (ft) a facet's highest point rises above the shared edge's HIGHEST point. THE ONE copy
+    (FRAME v106): transition_events.upper_face_id used to hold its own, and the flat-facet rule below
+    needs the same measurement, so it lives here — upstream of transition_events, which imports it."""
+    edge_z = max(float(geom.points[pid][2]) for pid in geom.lines[str(edge_line_id)].path)
+    face = geom.faces[str(face_id)]
+    return max(float(geom.points[pid][2]) for lid in face.line_ids for pid in geom.lines[lid].path) - edge_z
+
+
+def _fall_is_flat(f) -> bool:
+    return (float(f[0]) ** 2 + float(f[1]) ** 2) ** 0.5 < _FLAT_FALL_TOL
+
+
+def is_valley_typed(geom, line_id) -> bool:
+    """THE ONE test for "EagleView typed this edge a valley" (FRAME v106.3).
+
+    There were TWO, and they were not equivalent: this one, and `type == "VALLEY"` in
+    `candidate_emitters.emit_transition_candidates`. The second was **dead code** — it filtered the
+    enumerator's output, which has already dropped every valley-typed edge, so across 152 candidates on six
+    real claims it had **zero** to drop. A dead guard with a different predicate is worse than none: it
+    reads as a safeguard, and the moment the enumerator's exclusion is relaxed it wakes up with the other
+    semantics. Collapsing it HERE, before anything relaxes that exclusion, is the point of doing this first.
+    """
+    return "VALLEY" in str(geom.lines[str(line_id)].type).upper()
+
+
+def transition_for_pair(geom, line_id, face_a_id, face_b_id, fA, fB):
+    """THE ONE decision: is this shared edge a transition? -> (two_condition, true_transition).
+
+    Every ground on which an edge can be one lives here, in one place, so that adding another is adding an
+    INPUT to this function rather than a branch somewhere else. Today there is one input, the geometry:
+
+      * frozen `transition_detect` — the pitch difference, the shallow shared edge, and the two falls
+        agreeing (`dot(fA, fB) > 0`); and
+      * the FLAT-FACET rule (v106.0), because a flat facet has no fall, so that third condition is not
+        false but UNANSWERABLE (`dot((0,0), f) == 0` for every f). Elevation decides instead, by the same
+        measurement `upper_face_id` uses: the neighbour that rises above the shared edge. Joseph,
+        2026-11-01: "1 of those 4 sides abuts an up-slope facet. The other 3 are down-slopes. The
+        flat-to-steep (up slope) is the transition."
+
+    A pitched pair never reaches the flat branch, so every existing render is untouched.
+    """
+    face_a = geom.faces[str(face_a_id)]
+    face_b = geom.faces[str(face_b_id)]
+    line = geom.lines[str(line_id)]
+    eA = geom.points[line.path[0]]
+    eB = geom.points[line.path[-1]]
+    two_condition, true_transition = transition_detect(eA, eB, face_a.pitch, face_b.pitch, fA, fB)
+    if two_condition and not true_transition and (_fall_is_flat(fA) or _fall_is_flat(fB)):
+        flat_id, steep_id = ((face_a_id, face_b_id) if _fall_is_flat(fA) else (face_b_id, face_a_id))
+        true_transition = (rise_above_edge(geom, line_id, steep_id)
+                           > rise_above_edge(geom, line_id, flat_id))
+    return bool(two_condition), bool(true_transition)
+
 Point3 = Tuple[float, float, float]
 Point2 = Tuple[float, float]
 
@@ -85,10 +142,10 @@ def enumerate_transition_candidates(geom: EagleViewGeometry) -> List[TransitionC
         face_ids = line_to_roof_faces[line_id]
         if len(face_ids) != 2:
             continue
-        # EV VALLEY-typed lines are valleys, not pitch transitions: exclude from the
-        # automatic transition pool. (EV typing is authoritative for this; rare mistypes
-        # are handled by user confirmation of repair events, not by auto-detection.)
-        if "VALLEY" in geom.lines[line_id].type.upper():
+        # EV VALLEY-typed lines are valleys, not pitch transitions: exclude from the automatic transition
+        # pool. (EV typing is authoritative for this; rare mistypes are handled by user confirmation of
+        # repair events, not by auto-detection.) FRAME v106.3: asked of is_valley_typed, THE ONE test.
+        if is_valley_typed(geom, line_id):
             continue
         face_a_id, face_b_id = sorted(face_ids, key=_face_sort_key)
         face_a = geom.faces[face_a_id]
@@ -103,7 +160,9 @@ def enumerate_transition_candidates(geom: EagleViewGeometry) -> List[TransitionC
         pts_b = [geom.points[pid] for pid in geom.ordered_face_point_ids(face_b_id)]
         fA = facet_fall_xy(pts_a)
         fB = facet_fall_xy(pts_b)
-        two_condition, true_transition = transition_detect(eA, eB, face_a.pitch, face_b.pitch, fA, fB)
+        # FRAME v106.3 — ONE DECISION, asked once. Both grounds (transition_detect and the flat-facet
+        # rule) live in transition_for_pair; this loop enumerates pairs and does not decide anything.
+        two_condition, true_transition = transition_for_pair(geom, line_id, face_a_id, face_b_id, fA, fB)
         candidates.append(TransitionCandidate(
             edge_id=line_id,
             face_a_id=face_a_id,

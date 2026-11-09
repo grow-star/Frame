@@ -13,7 +13,8 @@ ALLOW = {
  2: {"CSS.acknowledged", "SC.estimate_id", "SC.estimate_name", "SC.lines",
      "CSS.reference_totals", "CSS.platform_identity.platform"},
  3: {"M2.required_lines", "M2.required_lines_by_structure", "M2.structure_blocks", "M2.per_shake_reasoning", "M2.citations", "SC.shake_dual",
-     "M2.replacement_facets", "M2.repair_facets", "M2.eave_iws"},
+     "M2.replacement_facets", "M2.repair_facets", "M2.eave_iws",
+     "M2.system_boundary_disclosures"},                      # v106.1: facets this claim did not scope
  4: {"M1.affected_polygons", "M1.affected_SF", "M1.facet_valley_assignments", "M1.authoritative_pct", "M1.replacement_facets"},
  5: {"SC.lines", "SC.structure_alignments", "SC.structure_comparisons", "SC.comparison_precondition", "SC.shake_dual",
      "SC.required_scope", "M2.citations", "CSS.platform_identity.platform", "SC.stated_gaps"},  # v72: platform + no-haul-off gaps; v84: per-structure §5
@@ -213,7 +214,10 @@ def render(inputs, sc):
               # v69: ordered per-structure blocks for §2's dual and §3's slope callouts.
               "structure_blocks": [dict(b) for b in (R(3, "M2.structure_blocks") or [])],
               # v71 DEFECT 3: eave ice & water metadata (basis, coverage, layer count) or None.
-              "eave_iws": R(3, "M2.eave_iws")}
+              "eave_iws": R(3, "M2.eave_iws"),
+              # FRAME v106.1: one row per facet excluded from this scope, with the area it withheld. Empty
+              # for every claim that excludes nothing, so those reports render byte-identically.
+              "system_boundary_disclosures": [dict(d) for d in (R(3, "M2.system_boundary_disclosures") or [])]}
 
     # 4 — Affected area diagram
     sec[4] = {"polygons": R(4, "M1.affected_polygons"), "affected_SF": R(4, "M1.affected_SF"),

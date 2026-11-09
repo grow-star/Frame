@@ -5,33 +5,102 @@
 # CHANGELOG 2026-07-03: unified centerline-extent stair seed for flat valleys; anchor unchanged 3691.
 
 import re
-from math import degrees, atan2
+from math import degrees, atan2, hypot        # FRAME v106.6d: hypot, for shared_edge_overlap_ft
 import numpy as np
 from matplotlib.path import Path
+from appurtenance_types import BASE_FLASHED as _BASE_FLASHED           # FRAME v106.6g
+from appurtenance_types import is_base_flashed as _is_base_flashed      # FRAME v106.6g: the
+from appurtenance_types import standard_base_in as _standard_base_in   # TYPE decides, not the size
+from appurtenance_types import resolve_type as _resolve_type           # by LABEL or by CATEGORY
+from appurtenance_types import declared_categories as _declared_categories
 from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
 
 # FRAME v95 / step 3b: the shake profile (constants, EXP/STEP, resolve_shake_measurements, _profile_units,
 # the tie-in extent, stair_edges) lives in roof_systems/wood_shake/wood_shake_geometry.py. Core never imports
 # a package: affected_area() looks the package up in core's registry by the profile's system_id.
-from roof_systems import system_for_profile, FacetGrid, PROPAGATE_TO_RIDGE, BOUNDED, SHADOW_RULES
+from roof_systems import (system_for_profile, FacetGrid, PROPAGATE_TO_RIDGE, BOUNDED, SHADOW_RULES,
+                          get as _rs_get, appurtenance_clearance_in as _appurtenance_clearance_in)
 
 CLEAR_BAND_FT  = 2.0
-APPURT_CLEAR_IN= 21.0
 BAND=CLEAR_BAND_FT
-CLR=APPURT_CLEAR_IN/12.
 
-def appurt_rect(app):
+# FRAME v106.6c: `APPURT_CLEAR_IN = 21.0` AND ITS DERIVED `CLR` ARE GONE FROM CORE.
+# The 21 in was wood shake's: it is how far the interlocking courses must be lifted to reach the flashing. It
+# sat here, applied to every roof system alike, so a membrane could not decline it — and a membrane has no
+# courses to lift, it is cut where it is cut (Joseph, 2026-11-05: "The cutback is the disturbance"). The number
+# is now DECLARED by each package through `register(appurtenance_clearance_in=...)` and reaches this module the
+# same way a VALLEY strategy does: looked up, never assumed.
+#
+# WHY IT HID FOR TWO ROOF SYSTEMS. The shared-core purity gate scans core for material WORDS — "shake",
+# "exposure", "course". A bare `21.0` carries none, so the gate was structurally unable to see the single most
+# load-bearing coursed assumption in core geometry. The gate catches NAMED coursed assumptions, not numeric
+# ones, and nothing in this build changes that: the lesson belongs in the ledger, not in a scan.
+
+def appurt_rect(app, clearance_in):
     """v3.2: appurtenance disturbance footprint, by TYPE (never size threshold).
     app REQUIRES 'kind': 'point' or 'dimensioned'.
-      POINT (pipe jack, turtle/box vent, turbine): fixed 21x21 square; no dims.
-      DIMENSIONED (chimney, skylight, other/custom): footprint + 21in EACH side;
+      POINT (every BASE_FLASHED type: pipe jack, box vent, turbine, power vent, vent cap): the type's
+        STANDARD FLASHING BASE plus clearance_in each side, taken from app['standard_base_in'] where the
+        router put it (v106.6g). A point zone with no standard base falls back to a bare clearance_in
+        square, which is now only the untyped hand-placed case; no dims either way.
+      DIMENSIONED (chimney, skylight, other/custom): footprint + clearance_in EACH side;
         requires positive w AND h.
     A dimensioned type with missing/zero dims is an ERROR, never a silent
     fallback to a point — the dropdown type is authoritative (Formula Spec §9).
     Returns rectangle polygon in facet frame (feet)."""
+    # FRAME v106.6c: clearance_in is REQUIRED and comes from the package that owns the facet. Core keeps the
+    # rectangle's SHAPE (geometry) and holds none of its SIZE (material). No default: a wrong clearance is a
+    # silently wrong scope, which is the defect this signature exists to prevent.
+    if not (isinstance(clearance_in, (int, float)) and not isinstance(clearance_in, bool) and clearance_in > 0):
+        raise ValueError(f"appurt_rect needs the owning package's appurtenance clearance, in inches; got "
+                         f"{clearance_in!r}. Core holds no clearance of its own (FRAME v106.6c).")
+    CLR = float(clearance_in) / 12.0
     cx,cy=app['cx'],app['cy']; kind=app.get('kind')
     if kind=='point':
-        hx=hy=CLR/2.0
+        # FRAME v106.6g: base-flashed - the type's standard flashing base plus the package's allowance on
+        # EACH side. Joseph, 2026-11-06: "For a typical box vent or pipe jack, you would need roughly a
+        # 21in x 21in square that gives enough room to place the 12in x 12in vent and place a strip of IWS
+        # around the flashing." A 12in base at 6in per side is a 24in square - ROOMIER than the 21in he
+        # described, not equal to it, and that is the authorized figure: asked for the rule rather than the
+        # example, he set the allowance itself ("A 5in to 6in area for IWS to be placed around the flashing on
+        # its common flashing base size would be fine"). Do not cut the allowance to 4.5in to make the
+        # arithmetic land on 21in; the allowance is the ruling and 21in was the illustration.
+        #
+        # The pre-v106.6g form, a bare clearance square with no base in it, is kept for a zone that carries
+        # no standard base. That is not a fallback for a base-flashed type - the router always stamps one -
+        # it is what a hand-placed marker with no type still gets, and it is what every construction written
+        # before this build gets, which is why no frozen figure in the suite moves on it.
+        #
+        # TRUTHFUL TO THE XML (Joseph, 2026-11-07). The base is the LARGER of the type's standard base and
+        # what the item actually measures, PER AXIS. His two requirements come apart exactly at a mislabel:
+        #   "My meaning for an XML pipe jack being the same disturbance as a user defined pipe jack is so I
+        #    don't have 1 at 34 each and 1 at 7. That looks odd and wrong. But, I can't have the program just
+        #    accept a label from a user when it is obviously not even close (e.g. labeling a chimney a pipe
+        #    jack and only giving it a pipe jack disturbance. That's not being truthful to the XML)."
+        # Taking the larger satisfies both. Two genuine pipe jacks both measure about their standard base, so
+        # they bill alike - the consistency he asked for. A 33in hole labelled a pipe jack bills for a 33in
+        # hole - the truthfulness he asked for. An earlier draft read his first requirement as "never consult
+        # the polygon" and so billed that hole as a 10in jack, which is the under-scope he rejected.
+        #
+        # THIS IS NOT v103's SIZE TEST RETURNING. v103 inferred the FLASHING METHOD from size: over 21in a
+        # vent became a curb and took the 21in curb allowance, a 7x jump in disturbance across a threshold.
+        # Formula Spec v3.4 section 9 forbids exactly that, and it is what made Yager's F73 - a nominal 6in
+        # vent measuring 6.0022 x 5.9975in - route as a curb for want of two thousandths of an inch. Here the
+        # METHOD still comes from the type and only the EXTENT follows the measurement, which is what a
+        # measurement is for. max() is continuous, so there is no threshold and no cliff: F73 takes
+        # max(10, 6.0022) = its 10in standard base and nothing happens at any boundary.
+        #
+        # A zone sized from the measurement rather than the declaration is a probable MISLABEL, and the user
+        # has to be told. The number is already truthful without the telling, which is why the two ship
+        # separately: v106.6h carries the CONFIRM gate and the citation naming both figures. See the prompt's
+        # section 8 - and note the figure is right whether or not anyone reads that warning.
+        _base_ft = app.get('standard_base_in')
+        if _base_ft is None:
+            hx = hy = CLR / 2.0
+        else:
+            _std = float(_base_ft) / 12.0
+            hx = max(_std, float(app.get('w') or 0.0)) / 2.0 + CLR
+            hy = max(_std, float(app.get('h') or 0.0)) / 2.0 + CLR
     elif kind=='dimensioned':
         w=app.get('w',0.0); h=app.get('h',0.0)
         if not (w>0 and h>0):
@@ -45,22 +114,39 @@ def appurt_rect(app):
 # FRAME v102: APPURTENANCE ROUTING — the TYPE decides the disturbance zone, never the measurement.
 # appurt_rect (above) has always said so; nothing upstream ever asked the type. An XML penetration arrives from
 # the parser as kind "dimensioned" (its polygon is a measurement), so a pipe jack / box vent / turbine scoped at
-# footprint + 21" per side: 5-7x the 21" zone. These two tables are the routing rule, and the one place it lives
-# in Python.
+# footprint + 21" per side: 5-7x the point zone of the day. These two tables are the routing rule, and the one
+# place it lives in Python.
 #   * label -> category mirrors module2_scope_expansion's type switch exactly (the category each label's
 #     material line bills); any other label (OTHER, or anything unknown) takes its other_category, as there.
 #     appurtenance_routing_regression asserts the mirror against expand_scope itself.
-#   * the point categories are the ones appurt_rect's docstring names POINT (pipe jack, turtle/box vent,
-#     turbine), plus the power vent and the vent cap. The LABELS that resolve to them must equal page 2's
+#   * v106.6g: which labels are POINT labels is no longer stated here. It is the TYPE table's BASE_FLASHED
+#     set, read below through _is_base_flashed. The LABELS must still equal page 2's
 #     POINT_APPURTENANCE_TYPES (page2.html) — asserted by the same regression, until page 2 reads this table.
-# The category only ever forces POINT. Everything else keeps the geometry as declared or measured (OTHER keeps
+# The flashing method only ever forces POINT. Everything else keeps the geometry as declared or measured (OTHER keeps
 # the dimensions the user typed; a dimensioned type with no dims still raises in appurt_rect).
 APPURT_LABEL_CATEGORY = {
     "CHIMNEY": "CHIMNEY_FLASH", "SKYLIGHT": "SKYLIGHT_FLASH", "PIPE": "PIPE_JACK_FLASH",
     "TURTLE": "BOX_VENT", "TURBINE": "TURBINE_VENT", "POWER_VENT": "POWER_VENT",
 }
-POINT_APPURTENANCE_CATEGORIES = frozenset({"PIPE_JACK_FLASH", "BOX_VENT", "TURBINE_VENT", "POWER_VENT", "VENT_CAP"})
-POINT_APPURTENANCE_TYPES = tuple(lab for lab, cat in APPURT_LABEL_CATEGORY.items() if cat in POINT_APPURTENANCE_CATEGORIES)
+# FRAME v106.6g: derived from the TYPE table, which is the one place that knows how an item is flashed.
+# POINT_APPURTENANCE_TYPES used to be derived from POINT_APPURTENANCE_CATEGORIES, so "which types are point
+# types" had two sources that happened to agree - and they agree in VALUE to this day, which is why no value
+# check can tell the two derivations apart. QA's G9 mutant reverted this line to the category set and the
+# ENTIRE suite stayed green. So the dependency is INVERTED instead: the categories are now derived FROM the
+# labels, below, and reverting this line to read the category set is a NameError at import rather than a
+# silent regression. The duplicate authority is not asserted away, it is unexpressible.
+POINT_APPURTENANCE_TYPES = tuple(lab for lab in APPURT_LABEL_CATEGORY if _is_base_flashed(lab))
+# Derived from the TYPE TABLE across BOTH its keys, which matters: a category can be a point without having
+# a dropdown label of its own. VENT_CAP is exactly that, and it is why this set is not derived from the four
+# labels above.
+#   The hand-written set this replaces held those same FIVE members, and it was RIGHT. v106.6g's first draft
+# called the fifth one dead - "no label resolves to VENT_CAP, so it routes nothing" - and dropped it. The
+# label part was true and the conclusion was false: page 2 offers VENT_CAP as a CATEGORY under "other" on all
+# three surfaces, so it routed, as a point, and the draft sent it curb-flashed at about 19 SF instead of
+# about 3 on shake. Deriving the set properly reproduces the original five member for member, which is the
+# cleanest evidence that the old hand-written value was correct and the draft's reasoning was not.
+POINT_APPURTENANCE_CATEGORIES = frozenset(
+    c for c in _declared_categories() if _is_base_flashed(category=c))
 
 def appurtenance_category(kind_label, other_category=None):
     """The category an appurtenance resolves to: its label's, else (OTHER / unknown) its other_category."""
@@ -69,23 +155,117 @@ def appurtenance_category(kind_label, other_category=None):
         return APPURT_LABEL_CATEGORY[lab]
     return str(other_category).strip() if other_category not in (None, "") else None
 
-def appurtenance_base_fits_point_zone(app_geom):
-    """FRAME v103 (Joseph, 2026-10-30): does the measured base fit inside the 21in square in BOTH axes?
-    Per axis, never by area — a 6in x 30in base sticks out of the square. No measured base (a hand-placed
-    marker) fits. Compared against APPURT_CLEAR_IN, the one definition of the zone."""
-    lim = APPURT_CLEAR_IN / 12.0
+def face_plan_points(geom, face_id):
+    """Every distinct plan point of a face, in the roof's shared frame (FRAME v106.6d)."""
+    ids = []
+    for lid in geom.faces[face_id].line_ids:
+        ids += list(geom.lines[lid].path)
+    return [geom.points[p] for p in dict.fromkeys(ids)]
+
+
+def shared_edge_overlap_ft(geom, host_a, host_b, pen_a, pen_b) -> float:
+    """How much of two markers' footprints face each other ACROSS the edge their host facets share.
+
+    FRAME v106.6d. EagleView splits one physical chimney that crosses a ridge into one ROOFPENETRATION
+    marker per facet. Each marker is a closed rectangle on its own plane, so each contributes a FOURTH SIDE
+    LYING ON THE RIDGE — and that side is not a chase wall. It is the cut line where EagleView divided one
+    object. Two markers, two phantom walls.
+
+    Measured on Yager, F68 (2.50 x 2.00) and F67 (2.50 x 4.50) across ridge L56: the two perimeters sum to
+    23.0036 LF, the chase's real perimeter along the roof is 18.0030, and the difference is 5.0006 = 2 x the
+    chimney's 2.50 ft width along the ridge. That difference is the OVER-BILL, and it is what the caller has
+    to remove.
+
+    This function does NOT return that width. It returns the OVERLAP of the two footprints projected onto the
+    shared edge's direction — on Yager 2.4554, against either marker's 2.5003 — so the correction it funds
+    is 4.9108 and the billed perimeter lands at 18.0929, about 1.16 in above the chase's real perimeter.
+    FRAME v106.6e: an earlier version of this docstring said in one paragraph that the width is returned and
+    in the next that it is not. The width was never returned; the first claim was wrong (QA error 77's family
+    again — a comment asserting what the code beside it disproves). The two numbers are a width and an
+    overlap, they differ, and which one is returned decides whether the correction lands on the true
+    perimeter or an inch above it.
+
+    The overlap is the right one of the two, for two reasons. A chimney may cross the ridge at an angle or only clip it, and then
+    the shared cut is shorter than either side. And where the two markers disagree slightly — on Yager they
+    differ by 0.045 ft of survey noise — the overlap is the SMALLER figure, so the correction UNDER-corrects
+    by about an inch rather than over-correcting. That direction is deliberate and is this project's standing
+    one: an over-bill is visible on the estimate and correctable, an under-bill is not.
+
+    0.0 — never an error — when there is nothing to correct: the same facet twice, the same marker twice, no
+    shared edge, or footprints that do not face each other across the edge they could have shared. Each of
+    those is a guard QA's first draft lacked, and the same-facet case returned 3.16 ft before they existed —
+    a correction invented out of nothing."""
+    if host_a == host_b or pen_a == pen_b:
+        return 0.0
+    try:
+        shared = set(geom.faces[host_a].line_ids) & set(geom.faces[host_b].line_ids)
+    except (KeyError, AttributeError):
+        return 0.0
+    if not shared:
+        return 0.0
+    try:
+        pts_a, pts_b = face_plan_points(geom, pen_a), face_plan_points(geom, pen_b)
+    except (KeyError, AttributeError):
+        return 0.0
+    if not pts_a or not pts_b:
+        return 0.0
+    best = 0.0
+    for lid in sorted(shared):
+        try:
+            a, b = (geom.points[p] for p in geom.lines[lid].path)
+        except (KeyError, ValueError, AttributeError):
+            continue
+        ux, uy = b[0] - a[0], b[1] - a[1]
+        n = hypot(ux, uy)
+        if n == 0:
+            continue
+        ux, uy = ux / n, uy / n
+        ra = [p[0] * ux + p[1] * uy for p in pts_a]
+        rb = [p[0] * ux + p[1] * uy for p in pts_b]
+        ov = min(max(ra), max(rb)) - max(min(ra), min(rb))
+        if ov > best:
+            best = ov
+    return max(best, 0.0)
+
+
+def appurtenance_base_fits_point_zone(app_geom, clearance_in):
+    """FRAME v103 (Joseph, 2026-10-30): does the measured base fit inside the clearance square in BOTH axes?
+    Per axis, never by area — a 6in x 30in base sticks out of a 21in square. No measured base (a hand-placed
+    marker) fits.
+
+    FRAME v106.6c: the square is the OWNING PACKAGE's clearance, not core's old 21 in, so the question is
+    asked in the same units the carve will use.
+
+    RETIRED IN v106.6g, AND IT ROUTES NOTHING. Nothing in production calls this. It is kept, with its
+    arithmetic still asserted, because a capability with no caller is a smaller change than deleting a public
+    function, and appurtenance_routing_regression pins it as exactly that — so the day a build wires
+    size-based routing back in, a check says so. Do NOT read the paragraph above as a live constraint: the
+    threshold and the carve no longer have to be one number, because there is no threshold. Formula Spec v3.4
+    section 9 always forbade inferring point vs. dimensioned from size, and this function was the inference.
+    What killed it was Yager's F73 — a nominal 6in vent measuring 6.0022 x 5.9975in — missing a 6in square by
+    two thousandths of an inch and routing as a curb on a membrane facet."""
+    lim = float(clearance_in) / 12.0
     w = float(app_geom.get("w") or 0.0); h = float(app_geom.get("h") or 0.0)
     return w <= lim and h <= lim
 
 def appurtenance_zone_geometry(app_geom, kind_label, other_category=None):
-    """Route an appurtenance's geometry to its disturbance zone BY TYPE. A point category whose base fits the 21in
-    square in both axes (or has no measured base) -> kind "point" (appurt_rect's fixed 21"x21" zone);
-    anything else -> app_geom unchanged.
+    """Route an appurtenance's geometry to its disturbance zone BY TYPE, and by nothing else. A BASE_FLASHED
+    type -> kind "point", carrying that type's standard flashing base; a CURB_FLASHED type, and any type this
+    table does not declare, -> app_geom unchanged, to be measured.
 
-    FRAME v103, Joseph's ruling: over 21in it is not a vent flashing, it is a curb — a DIMENSIONED appurtenance,
-    base + 21in each side, as a chimney gets. The step at the boundary (a 21in base scopes 7 EA, a 22in base the
-    ring) is RULED, not an artefact: the two branches are different jobs. Do not floor, taper or blend it. The
-    predicate only ever WITHHOLDS point routing; it never routes a non-point label by size.
+    FRAME v106.6g: there is NO clearance parameter. It was the third positional parameter through v106.6c and
+    v106.6f, because routing then needed to compare a measured base against the package's square. Routing no
+    longer asks how big anything is, so the parameter is gone rather than ignored: sizing happens at the ONE
+    site that sizes a zone, and threading a clearance back in here is a TypeError, not a quiet regression.
+
+    SUPERSEDED, and recorded so that nobody restores it: FRAME v103 ruled a step at the 21in boundary — over
+    21in it is not a vent flashing but a curb, so a 21in base scoped 7 EA and a 22in base the ring, and that
+    step was "RULED, not an artefact: do not floor, taper or blend it." Formula Spec v3.4 section 9 had always
+    said the opposite ("the disturbance footprint is set by the appurtenance TYPE, never by a size
+    threshold... The program must NOT infer point vs. dimensioned from size"), and the step is what made
+    Yager's F73 — a nominal 6in vent measuring 6.0022 x 5.9975in — route as a curb on a membrane facet. The
+    spec wins. The step does not exist: a base-flashed type is a point at any measured size, and
+    appurtenance_routing_regression sweeps 6in to 48in to assert the disturbance never moves.
 
     The routed geometry KEEPS any measured w/h. appurt_rect ignores them for a point, so they no longer size the
     ZONE — but module1_m2interface._surface_appurts reads exactly those keys for Appurt.affected_SF, which drives
@@ -93,12 +273,32 @@ def appurtenance_zone_geometry(app_geom, kind_label, other_category=None):
     is the type's, the IWS is the measurement's, and module1_m2interface stays byte-identical."""
     if app_geom is None or not hasattr(app_geom, "keys"):
         return app_geom
-    if appurtenance_category(kind_label, other_category) not in POINT_APPURTENANCE_CATEGORIES:
+    # FRAME v106.6g: routed by the TYPE's flashing method and by nothing else. Formula Spec v3.4 section 9:
+    # "the disturbance footprint is set by the appurtenance TYPE, never by a size threshold... The program
+    # must NOT infer point vs. dimensioned from size." The measured base is no longer consulted, so an item
+    # of a type behaves identically whether EagleView measured it or a user placed it - Joseph's requirement,
+    # 2026-11-06. A curb-flashed or unknown type keeps its measured geometry, unchanged.
+    # C-2: a row may say OTHER and name its real thing as a CATEGORY (a user picking "other" and then "pipe
+    # jack flashing"). Both names are keys into the shared type table, so ONE resolver takes both and the
+    # table decides. Two drafts got this wrong and both were caught by a reader, not by a gate:
+    #   * the first read kind_label alone, and billed a declared pipe jack as a curb;
+    #   * the second resolved a category by SCANNING THE LABEL TABLE for a matching one, which works only for
+    #     categories that happen to have a label. VENT_CAP has none — page 2 offers it under "other" and
+    #     always has — so it fell through to unknown, went curb-flashed, and billed about 19 SF instead of
+    #     about 3 on shake. That is the 4-7x overbill Joseph refused on 2026-11-06, reintroduced by the build
+    #     meant to prevent it. A category is now LOOKED UP, never inferred from the labels.
+    _t = _resolve_type(kind_label, other_category)
+    if _t is None or _t.flashing_method != _BASE_FLASHED:
         return app_geom
-    if not appurtenance_base_fits_point_zone(app_geom):
+    base_in = _t.standard_base_in
+    if base_in is None:
         return app_geom
     routed = dict(app_geom)
     routed["kind"] = "point"
+    # The type's own base travels with the zone so that the ONE site which sizes it can, without having to
+    # know the type. Core still holds no material number: this came from the shared type table, and the
+    # allowance it gets added to comes from the package.
+    routed["standard_base_in"] = float(base_in)
     return routed
 
 def appurtenance_zone_holes(app_geom, holes):
@@ -212,13 +412,20 @@ def _hashable_apps(apps):
 def _band_key(bands):
     return tuple((float(b["x0"]),float(b["x1"]),float(b["y0"]),float(b["y1"])) for b in (bands or []))
 
-def _area_cache_key(facet,valleys,pens,nots,apps,res,prof,return_zone,bands=None):
+def _area_cache_key(facet,valleys,pens,nots,apps,res,prof,return_zone,bands=None,facet_system_id=None):
     """COMPLETE key: every input affected_area's result depends on. Any difference in
     facet, valleys, penetration holes, notch holes, appurtenances, resolution, the
     resolved measurements, or the ROOF SYSTEM that resolved them is a MISS, so a stale
     result can never be reused (across facets, measurement profiles, roofs, or systems).
     FRAME v104b (K9): until v104b the system id was missing, so this claim was false — two
-    systems at the same width and exposure shared one entry. Dispatch made it reachable."""
+    systems at the same width and exposure shared one entry. Dispatch made it reachable.
+
+    FRAME v106.6c: `facet_system_id` joins the key, and it is NOT redundant with the profile's system id.
+    The appurtenance clearance now comes from the FACET's declared covering while `prof` still carries the
+    PREDOMINANT system's measurements, so the same facet, appurtenance and profile can be carved at 21 in
+    (as wood shake) or at 6 in (as a membrane). Without this term the first of those two carves would be
+    served to the second from cache — a stale area, silently. That is the same defect K9 fixed one layer up,
+    and the docstring above would have gone back to being false."""
     return (_poly_key(facet),
             _hashable_valleys(valleys),
             tuple(_poly_key(h) for h in (pens or [])),
@@ -228,7 +435,8 @@ def _area_cache_key(facet,valleys,pens,nots,apps,res,prof,return_zone,bands=None
             float(prof["width_in"]), float(prof["exposure_in"]),
             str(prof["system_id"]),   # FRAME v104b (K9)
             bool(return_zone),
-            _band_key(bands))
+            _band_key(bands),
+            None if facet_system_id is None else str(facet_system_id))   # FRAME v106.6c
 
 def clear_area_cache():
     _AREA_CACHE.clear()
@@ -261,7 +469,7 @@ def _facet_grid(facet,pens,nots,res,prof):
 def affected_area(facet,valleys,penetrations=None,notches=None,
                   appurtenances=None,res=0.04,return_zone=False,
                   shake_measurements=None, width_in=None, exposure_in=None,
-                  transition_bands=None):
+                  transition_bands=None, facet_system_id=None):
     """Union of per-event zones (valleys + appurtenances), shadow-filled per
     rule (C), clipped to facet minus all holes. Source-agnostic: events from
     EagleView and user placement are identical here (rule F).
@@ -298,7 +506,7 @@ def affected_area(facet,valleys,penetrations=None,notches=None,
     # the mask/grid arrays are treated as read-only by every caller (verified).
     try:
         _key=_area_cache_key(facet,valleys,penetrations,notches,appurtenances,res,prof,return_zone,
-                             transition_bands)
+                             transition_bands,facet_system_id)
     except TypeError:
         _key=None                                    # unhashable input -> just compute, never cache
     if _key is not None:
@@ -349,8 +557,32 @@ def affected_area(facet,valleys,penetrations=None,notches=None,
         union|=dist
 
     # ---- APPURTENANCE events (localized spot repair, no valley-style shadow fill) ----
+    # FRAME v106.6c: the clearance is the OWNING PACKAGE's, looked up exactly as the VALLEY strategy is. The
+    # facet's declared covering decides it (facet_system_id), falling back to the profile's system when the
+    # caller names none — which is every pre-v106.6c caller, and for them the number is unchanged because wood
+    # shake declares the same 21 in core used to hold. A package that declares no clearance RAISES, named.
+    # FRAME v106.6g: this is now the ONLY site that resolves an appurtenance clearance. Five others used to,
+    # all of them only to ask "is this a point?", and the TYPE answers that itself now (appurtenance_types).
+    # The allowance is picked per zone by its flashing method, because the two are different distances for
+    # different reasons: a curb-flashed item needs an 18in IWS strip round its perimeter, a base-flashed one
+    # needs room to set a flange and lap it. A zone carrying a standard base came from the type table and is
+    # base-flashed; anything else takes the curb allowance. "Anything else" is NOT the same as "measured":
+    # a dimensioned item is measured, and an UNTYPED POINT item keeps its point shape and takes a bare
+    # allowance square. A hand-placed marker is not in that bucket merely for being hand-placed either - a
+    # hand-placed PIPE carries its type's standard base exactly as an EagleView one does, which was the whole
+    # point of the type table. An earlier comment here said otherwise and was wrong on both counts.
+    if appurtenances:
+        _clr_system = _rs_get(facet_system_id) if facet_system_id is not None else _system
+        _clr_curb = _appurtenance_clearance_in(_clr_system.system_id)
+        _clr_base = None
     for app in (appurtenances or []):
-        rect=Path(appurt_rect(app))
+        if hasattr(app, "get") and app.get("standard_base_in") is not None:
+            if _clr_base is None:
+                _clr_base = _appurtenance_clearance_in(_clr_system.system_id, _BASE_FLASHED)
+            _clr_in = _clr_base
+        else:
+            _clr_in = _clr_curb
+        rect=Path(appurt_rect(app, _clr_in))
         dist=rect.contains_points(pts).reshape(X.shape)&field
         per.append((dist&inside).sum()*res*res)
         union|=dist

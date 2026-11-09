@@ -37,8 +37,10 @@ from __future__ import annotations
 from typing import List, Mapping, Optional, Sequence
 
 from roof_systems import course_top_ft, system_for_profile   # FRAME v105.4: the profile's OWN package answers (no package import)
-from scope_contract import METAL_EXPOSED, METAL_MEMBRANE, TRANSITION_METAL_VALUES   # FRAME v100: the contract's core home (was module2_scope_expansion)
-from transition_enumerator import confirmed_transitions, transition_contact_readings
+from scope_contract import (CAP_THRESHOLD,   # FRAME v106.5: THE ONE continuous-metal rule — this module held a
+                            METAL_EXPOSED, METAL_MEMBRANE,   # copy of a package's constant and said so in a comment
+                            TRANSITION_METAL_VALUES)   # FRAME v100: the contract's core home (was module2_scope_expansion)
+from transition_enumerator import confirmed_transitions, transition_contact_readings, rise_above_edge
 
 UPPER_BAND_FT = 3.0        # RETIRED v90 — NOT READ. Was the CSSB 914 mm (36 in) strip. The upper band is now
                            # geometry_core.three_course_extent_ft() (Joseph 2026-10-17: top of the 3rd course).
@@ -141,7 +143,6 @@ def selected_transitions(geom, confirmed_selection) -> list:
 # ---------------------------------------------------------------------------
 # 1b. PATH A — the passive >=95% rule, now actually LIVE (Build 2b)
 # ---------------------------------------------------------------------------
-CAP_THRESHOLD = 0.95        # same constant module2_scope_expansion uses; the rule is unchanged
 
 
 def transition_contact_lf(geom, transition, selected_valley_ids) -> float:
@@ -259,10 +260,10 @@ def transition_trigger(geom, confirmed_selection, edge_id) -> str:
 # ---------------------------------------------------------------------------
 def _rise_above_edge(geom, transition, face_id: str) -> float:
     """How far (ft) the facet's highest point rises above the shared edge's HIGHEST point. The edge's
-    max z, not path[0]: a sloped shared edge must not be able to skew the comparison."""
-    edge_z = max(float(geom.points[pid][2]) for pid in geom.lines[transition.edge_id].path)
-    face = geom.faces[face_id]
-    return max(float(geom.points[pid][2]) for lid in face.line_ids for pid in geom.lines[lid].path) - edge_z
+    max z, not path[0]: a sloped shared edge must not be able to skew the comparison. FRAME v106: THE ONE
+    copy now lives in transition_enumerator (rise_above_edge), because the flat-facet transition rule needs
+    the same measurement. This delegates; it does not re-implement."""
+    return rise_above_edge(geom, transition.edge_id, face_id)
 
 
 def upper_face_id(geom, transition) -> str:
@@ -337,6 +338,48 @@ def transition_band_for_face(geom, transition, face_id: str,
     band["edge_total_LF"] = float(transition.edge_total_LF)
     band["course_ft"] = course_ft
     return band
+
+
+def system_boundary_band_for_face(geom, face_id: str, line_id: str, edge_total_LF: float,
+                                  extent_ft: float,
+                                  shake_measurements: Optional[Mapping[str, object]] = None) -> Mapping[str, object]:
+    """The band a SYSTEM BOUNDARY carves on its COURSED side (FRAME v106.3b) — same shape as a transition's.
+
+    THIS IS NOT A NEW RULE. It is `transition_bands_by_face`'s v91 MEMBRANE rule, in that function's own
+    words: *"the membrane is the existing flashing and stays in place, so the MEMBRANE (LOWER) side is not
+    disturbed and gets NO band. The steep (UPPER) side is still opened — three courses lifted to tuck the
+    membrane under."* Joseph, 2026-10-25: *"the band still carves the untouched slope."* That rule has been
+    live since v91 and correct the whole time; it simply never reached a shake-to-membrane boundary, because
+    EagleView types those lines VALLEY and the geometric transition detector therefore never sees them
+    (measured on Yager: 15 transition candidates, and L30/L36/L45/L49 are not among them).
+
+    TWO DELIBERATE DIFFERENCES from `transition_band_for_face`, each because the question differs:
+
+      * WHICH SIDE gets the band is decided by SYSTEM, not by elevation. On a transition, up-slope and
+        down-slope are a 3-D elevation fact. On a system boundary the band exists because COURSES have to be
+        lifted, so it belongs to whichever side is coursed — and that side is the one whose package declares
+        `course_top_ft`. A membrane has no courses to lift. The caller resolves this through the registry and
+        passes the coursed facet.
+      * THE EXTENT IS PASSED IN, as `extent_ft`, rather than recomputed. The caller already holds it from
+        `roof_systems.system_boundary_tie_in_ft` — the membrane manufacturer's course count composed with the
+        coursed package's own course geometry — and it is the SAME number the membrane's own tie-in line
+        bills. That is the point: the membrane runs up exactly as far as the courses are lifted, so one call
+        answers both and they cannot drift apart.
+
+    Always UPPER: a boundary band is measured UP-slope from the edge into the coursed facet, and is clipped
+    to the facet by affected_area, so a short slope yields a shorter band rather than spilling off the roof.
+    """
+    frame = geom.face_frame(str(face_id))
+    line = geom.lines[str(line_id)]
+    a = frame(geom.points[line.path[0]])
+    b = frame(geom.points[line.path[-1]])
+    edge_y = (float(a[1]) + float(b[1])) / 2.0
+    x_lo, x_hi = sorted((float(a[0]), float(b[0])))
+    system = system_for_profile(shake_measurements)
+    prof = system.resolve_profile(shake_measurements)
+    return {"x0": x_lo, "x1": x_hi, "y0": edge_y, "y1": edge_y + float(extent_ft), "side": UPPER,
+            "edge_id": str(line_id), "face_id": str(face_id),
+            "edge_total_LF": float(edge_total_LF), "course_ft": float(prof["exposure_in"]) / 12.0}
 
 
 def transition_bands_by_face(geom, confirmed_selection,

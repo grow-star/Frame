@@ -10,8 +10,8 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from module3_render_engine import render
-from shared_category_registry import (field_category_id, line_system, material_splits,   # FRAME v104c: per line,
-                                      sole_category_package)                         # or the sole package (bridge 4)
+from shared_category_registry import (field_category_id, field_category_ids,   # FRAME v106.4: membership at the
+                                      line_system, material_splits)            # two dual sites; per line at _is_field
 
 DIAGRAM_PENDING = "DIAGRAM_PENDING_PAGE2"
 
@@ -153,6 +153,9 @@ def _project_m2(module2_result: Any, argument_pack: Mapping[str, Any], reference
     return {
         "required_lines": _m2_required_lines(module2_result),
         "required_lines_by_structure": _m2_required_lines_by_structure(module2_result),
+        # FRAME v106.1: facets this claim did NOT scope, and the area each withheld. Empty for every claim
+        # that excludes nothing, so those reports render byte-identically.
+        "system_boundary_disclosures": _m2_boundary_disclosures(module2_result),
         # v69: ordered per-structure blocks for §2's dual and §3's slope callouts (empty for a single
         # structure, so those sections render byte-identically).
         "structure_blocks": _structure_blocks(module2_result, roof_structure_id),
@@ -269,6 +272,22 @@ def _one_line(line: Any) -> Mapping[str, Any]:
         "unit": _field(line, "unit"),
         "gate": _field(line, "gate", "module2"),
     }
+
+
+def _m2_boundary_disclosures(module2_result: Any) -> Sequence[Mapping[str, Any]]:
+    """FRAME v106.1 — one row per facet this claim declined to scope, for the report's §3.
+
+    EMPTY unless the selection excluded a facet, so every other report renders byte-identically. Flattened
+    to plain mappings here, like every other M2 payload: the renderer never sees an engine dataclass.
+    """
+    rows = ((module2_result.get("system_boundary_disclosures", ()) if isinstance(module2_result, Mapping)
+             else getattr(module2_result, "system_boundary_disclosures", ())) or ())
+    out = []
+    for d in rows:
+        g = (lambda n: d.get(n) if isinstance(d, Mapping) else getattr(d, n, None))
+        out.append({"face_id": g("face_id"), "designator": g("designator"), "edge_id": g("edge_id"),
+                    "edge_type": g("edge_type"), "dropped_SF": g("dropped_SF"), "reason": g("reason")})
+    return tuple(out)
 
 
 def _m2_required_lines_by_structure(module2_result: Any) -> Sequence[Mapping[str, Any]]:
@@ -390,10 +409,19 @@ def _required_scope_from_module2(module2_result: Any) -> Sequence[Mapping[str, A
 
 
 def _shake_dual_from_lines(lines: Sequence[Mapping[str, Any]], comparison_result: Optional[Mapping[str, Any]]) -> Optional[Mapping[str, Any]]:
-    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — comparison rows carry a category, not a system.
-    _fid = field_category_id(sole_category_package("module3_caller._shake_dual_from_lines: comparison rows"))
+    # FRAME v106.4: BRIDGE 4 RETIRED HERE — membership, no package picked. A comparison row carries a
+    # category, not a system, and the only question is "is this row a FIELD covering?", which membership
+    # answers at any package count. (Was v104c: field_category_id(sole_category_package(...)); it raised the
+    # moment a second package registered, and was the ELEVENTH such site — found by running the suite, not
+    # by reading, because `module3_caller` reaches it only through build_module3_inputs.)
+    #
+    # LOGGED: a "dual" is a SQ quantity with an EA supporting quantity, which only a COURSED covering has —
+    # a membrane bills SQ alone. So on a mixed roof the first matching row is the coursed system's in every
+    # case this tree can produce, and the single-system result is unchanged. Resolving it from the row's own
+    # system (ScopeLine.material_profile_id, which serialization still drops) is the proper retirement.
+    _fids = frozenset(field_category_ids())
     for line in lines:
-        if line.get("category_id") == _fid:
+        if line.get("category_id") in _fids:
             return {"comparison_quantity": line.get("required_quantity"), "comparison_unit": line.get("required_unit", "SQ"),
                     "supporting_quantity": line.get("supporting_quantity"), "supporting_unit": line.get("supporting_unit")}
     if comparison_result:
@@ -402,9 +430,14 @@ def _shake_dual_from_lines(lines: Sequence[Mapping[str, Any]], comparison_result
 
 
 def _shake_dual_from_required(required: Optional[Mapping[str, Mapping[str, Any]]]) -> Optional[Mapping[str, Any]]:
-    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — a category-keyed `required` map carries no system.
-    _fid = field_category_id(sole_category_package("module3_caller._shake_dual_from_required: a category-keyed map"))
-    if not required or _fid not in required:
+    # FRAME v106.4: BRIDGE 4 RETIRED HERE — membership, no package picked. A category-keyed map carries no
+    # system, and the question is only "which key is a FIELD covering?". Keys are checked in sorted order so
+    # a mixed map resolves deterministically rather than by dict insertion. Same "a dual needs an EA
+    # supporting quantity, which only a coursed covering has" note as _shake_dual_from_lines above.
+    if not required:
+        return None
+    _fid = next((f for f in sorted(field_category_ids()) if f in required), None)
+    if _fid is None:
         return None
     shake = required[_fid]
     return {"comparison_quantity": shake.get("comparison_quantity"), "comparison_unit": shake.get("comparison_unit"),

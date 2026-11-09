@@ -41,6 +41,9 @@ from scope_contract import M1Interface   # FRAME v104b: the contract from core (
 from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
 # FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired) — v104a's resolvers, no third path.
 from roof_systems import get as roof_system, sole_registered_system, system_for_facet, system_for_profile   # v105.4
+from roof_systems import system_for_facets   # FRAME v106.6c: a merged slope's system
+from roof_systems import appurtenance_clearance_for_facet   # FRAME v106.6c: the facet's own setback
+from roof_systems import appurtenance_clearance_for_facets   # FRAME v106.6c: a merged slope's setback
 from notch_candidate_emitter import emit_notch_candidates
 
 
@@ -70,6 +73,9 @@ appurtenance_zone_geometry = _engine.appurtenance_zone_geometry   # FRAME v102: 
 appurtenance_zone_holes = _engine.appurtenance_zone_holes         # FRAME v103: a point zone is not carved by its own hole
 import wood_shake_geometry  # noqa: F401  FRAME v105.4: imported ONLY to register the package (A11) — no function is
                             # imported; the profile's own package resolves it through the registry (system_for_profile)
+import modbit_geometry  # noqa: F401  FRAME v106.4: the SECOND package, imported ONLY to register it, by the same
+                        # rule — no function is imported from it either. A package added later is its files plus an
+                        # import line here and one in the bridge's boot helper; nothing else in this module changes.
 
 
 def _shake_measurements_from_selection(confirmed_selection: Mapping[str, object]) -> Mapping[str, object]:
@@ -251,7 +257,8 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
         # point category reroutes. Measured w/h ride along for APPURT_IWS (geometry_core.appurtenance_zone_geometry).
         cand = Candidate(kind=cand.kind, source_ids=cand.source_ids, origin=cand.origin,
             params={**cand.params, "appurtenance_geometry": appurtenance_zone_geometry(
-                cand.params.get("appurtenance_geometry"), row.get("kind_label", "CHIMNEY"), row.get("other_category"))})
+                cand.params.get("appurtenance_geometry"), row.get("kind_label", "CHIMNEY"),
+                row.get("other_category"))})   # FRAME v106.6g: routed by TYPE; no clearance resolved here
         # THE FAN CARVES. THE COVER DOES NOT. Module 1 feeds the DIAGRAM; module2_assembly feeds the
         # SCOPE. Both import the SAME predicate from shared_category_registry, because this project
         # has shipped "the engine computed it correctly and a downstream path disagreed" five times
@@ -282,7 +289,7 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
         if not bool(row.get("repair_event", True)):
             continue
         host_face_id = str(row["host_facet_id"])
-        cand = _user_appurtenance_candidate_from_row(row)
+        cand = _user_appurtenance_candidate_from_row(row, confirmed_selection)
         if host_face_id in _repair_facet_ids:
             area, _zone, _gx, _gy, _zone_face_id = _appurtenance_net_affected_area(geom, host_face_id, cand, confirmed_selection)
         else:
@@ -371,6 +378,7 @@ def _appurtenance_net_affected_area(geom: EagleViewGeometry, host_face_id: str, 
         engine_face.facet,
         [],
         appurtenances=[dict(candidate.params["appurtenance_geometry"])],
+        facet_system_id=system_for_facet(host_face_id, confirmed_selection or {}),   # FRAME v106.6c
         penetrations=appurtenance_zone_holes(candidate.params["appurtenance_geometry"], _penetrations_with_user_footprints(geom, confirmed_selection, host_face_id)),  # FRAME v103: a point zone is not carved by its own hole
         return_zone=True,
         shake_measurements=shake_measurements,
@@ -415,7 +423,9 @@ def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candid
     holes = _dimensional_pens(pens)
     app = _candidate_appurtenance_geometry_in_frame(geom, appurtenance_candidate, frame)
     _per_app, _app_area, app_zone, gx, gy = affected_area(
-        facet, [], notches=notches, appurtenances=[app], penetrations=appurtenance_zone_holes(app, holes), return_zone=True,  # FRAME v103: a point zone is not carved by its own hole
+        facet, [], notches=notches, appurtenances=[app], penetrations=appurtenance_zone_holes(app, holes), return_zone=True,  # FRAME v103
+        facet_system_id=system_for_facets(notch_candidate.params["member_face_ids"], confirmed_selection or {},
+                                          "an appurtenance carve on a merged slope"),   # FRAME v106.6c: a point zone is not carved by its own hole
         shake_measurements=shake_measurements
     )
 
@@ -450,6 +460,7 @@ def _appurtenance_affected_area(geom: EagleViewGeometry, host_face_id: str, cand
         engine_face.facet,
         [],
         appurtenances=[dict(candidate.params["appurtenance_geometry"])],
+        facet_system_id=system_for_facet(host_face_id, confirmed_selection or {}),   # FRAME v106.6c
         penetrations=appurtenance_zone_holes(candidate.params["appurtenance_geometry"], _penetrations_with_user_footprints(geom, confirmed_selection or {}, host_face_id)),  # FRAME v103: a point zone is not carved by its own hole
         return_zone=True,
         shake_measurements=shake_measurements,
@@ -492,6 +503,8 @@ def _merged_appurtenance_affected_area(geom: EagleViewGeometry, notch_candidate:
         [],
         notches=notches,
         appurtenances=[app],
+        facet_system_id=system_for_facets(notch_candidate.params["member_face_ids"], confirmed_selection or {},
+                                          "an appurtenance carve on a merged slope"),   # FRAME v106.6c
         penetrations=appurtenance_zone_holes(app, _dimensional_pens(pens)),  # FRAME v103: a point zone is not carved by its own hole
         return_zone=True,
         shake_measurements=shake_measurements,
@@ -557,7 +570,11 @@ def _user_footprint_polygon_local(row: Mapping[str, object]):
     return [(cx - hw, cy - hh), (cx + hw, cy - hh), (cx + hw, cy + hh), (cx - hw, cy + hh)]
 
 
-def _user_appurtenance_candidate_from_row(row: Mapping[str, object]) -> Candidate:
+def _user_appurtenance_candidate_from_row(row: Mapping[str, object],
+                                          confirmed_selection: Mapping[str, object] | None = None) -> Candidate:
+    # FRAME v106.6c: the selection is needed to route this row's zone by the HOST FACET's covering.
+    # It defaults to None so the signature stays additive, and None resolves exactly as before:
+    # system_for_facet falls through to the predominant system, then to the sole registered one.
     host_face_id = str(row["host_facet_id"])
     position = row.get("position")
     if not isinstance(position, Mapping):
@@ -586,9 +603,15 @@ def _user_appurtenance_candidate_from_row(row: Mapping[str, object]) -> Candidat
             "width": app_geom.get("w"),
             "height": app_geom.get("h"),
             "appurtenance_shape": shape,
-            # FRAME v102: the TYPE decides the zone. A point category takes the 21" zone whatever shape was
-            # declared; everything else keeps app_geom exactly as built above (geometry_core).
-            "appurtenance_geometry": appurtenance_zone_geometry(app_geom, row.get("kind_label") or "OTHER", row.get("other_category")),
+            # FRAME v102/v106.6g: the TYPE decides the zone, by its FLASHING METHOD and by nothing else.
+            # A base-flashed type becomes a point carrying its own STANDARD FLASHING BASE, to which the
+            # package adds its base allowance - not the 21" curb zone an earlier comment here named, and not
+            # the declared shape. Everything else keeps app_geom exactly as built above (geometry_core).
+            # The row's other_category is passed because a row saying OTHER names its real thing there, and
+            # some categories (VENT_CAP) are reachable ONLY that way.
+            "appurtenance_geometry": appurtenance_zone_geometry(
+                app_geom, row.get("kind_label") or "OTHER",
+                row.get("other_category")),   # FRAME v106.6g: routed by TYPE; no clearance resolved here
             "kind_label": str(row.get("kind_label") or "OTHER"),
             "designator": str(row.get("designator") or row.get("label") or "user"),
         },
@@ -602,8 +625,17 @@ def _candidate_appurtenance_geometry_in_frame(geom: EagleViewGeometry, candidate
         # candidate's geometry was routed BY TYPE where it was built, so a point-routed penetration keeps the
         # point zone here too — the type decides, never this re-measurement.
         app = _appurtenance_geometry_in_frame(geom, str(params["penetration_face_id"]), frame)
-        if (params.get("appurtenance_geometry") or {}).get("kind") == "point":
-            return {**app, "kind": "point"}
+        # FRAME v106.6g: `app` here is a FRESH re-measurement of the penetration face, not the routed
+        # candidate geometry, so spreading it carries none of the routing. The TYPE's standard flashing base
+        # has to be taken from the routed geometry explicitly. QA swept for this pattern, saw this line, and
+        # judged it safe because it spreads a dict - the dict it spreads is the wrong one. Yager's F71 on the
+        # merged plane read 3.0976 SF, the bare clearance square, until this carried the base.
+        _routed = params.get("appurtenance_geometry") or {}
+        if _routed.get("kind") == "point":
+            _out = {**app, "kind": "point"}
+            if _routed.get("standard_base_in") is not None:
+                _out["standard_base_in"] = float(_routed["standard_base_in"])
+            return _out
         return app
     app = params.get("appurtenance_geometry")
     if not isinstance(app, Mapping):
@@ -612,7 +644,15 @@ def _candidate_appurtenance_geometry_in_frame(geom: EagleViewGeometry, candidate
     center = _face_local_point_to_3d(geom, host_face_id, float(app["cx"]), float(app["cy"]))
     cx, cy = (float(v) for v in frame(center))
     if app.get("kind") == "point":
-        return {"cx": cx, "cy": cy, "kind": "point"}
+        # FRAME v106.6g: the TYPE's standard flashing base travels with the zone, so it must survive being
+        # rebuilt in a facet frame. Dropping it silently reverts a merged-plane vent to the bare clearance
+        # square - Yager's F71 read 3.0976 SF instead of 3.3856 until this line carried it. Same shape as
+        # v106.6d's shared_edge_ft carry-through: a reader that reconstructs a record loses every field it
+        # does not name.
+        _out = {"cx": cx, "cy": cy, "kind": "point"}
+        if app.get("standard_base_in") is not None:
+            _out["standard_base_in"] = float(app["standard_base_in"])
+        return _out
     return {"cx": cx, "cy": cy, "w": float(app["w"]), "h": float(app["h"]), "kind": "dimensioned"}
 
 

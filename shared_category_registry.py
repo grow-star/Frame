@@ -42,9 +42,93 @@ CORE_REGISTRY = (
     "UNMAPPED","VALLEY_METAL","VENT_CAP",
 )
 CORE_REGISTRY_SET = frozenset(CORE_REGISTRY)
+
+# =============================================================================================
+# FRAME v106.6 — THE POST-LEGACY SHARED TIER, and why it is a third tier rather than more core
+#
+# Joseph ruled on 2026-11-04 that the flat-roof appurtenance detail is the FLAT FAMILY'S, not one
+# package's: "your proposals are good for the MODBIT and really for TPO and EPDM as well." Two of the ids
+# it needs belong to NO system — counterflashing is metal (Finding 4: metal belongs to no system, so it
+# must MERGE with the steep side's) and a skylight's own detach-and-reset is not roofing material at all.
+#
+# A package may only `use` ids it does not own, and until now that meant CORE ids. But CORE CANNOT GROW.
+# `two_tier_registry_regression` asserts, in its own words, "COMPOSITE == LEGACY 72dc2aee… with only
+# wood_shake loaded — PERMANENT (historical receipts verifiable)", and `registry_page_drift_gate` asserts
+# the same equality for the live pages. Those receipts have gone to carriers. Adding an id to CORE_REGISTRY
+# would retire that guarantee to record a line item, which is the wrong trade and Joseph made the call:
+# keep the anchor.
+#
+# SO THE SHARED TIER IS OWNERLESS, AND IT IS LAZY. A shared id enters the composite REGISTRY only when a
+# registered package declares it uses it — exactly as a package's own ids do. With only wood_shake loaded
+# no shared id is used, so the composite is bit-for-bit the legacy 72dc2aee and the permanent assertion
+# stays literally true rather than being rewritten to stay true.
+#
+# WHAT BELONGS HERE, and what does not. A shared id is one that more than one package legitimately emits
+# AND whose lines must MERGE across them — which is the same physical test as Finding 4: the part is metal,
+# or it is not roofing material at all, so it carries no system in its text. A part made OF the membrane
+# (a patch, a curb flashing, a parapet flash) is the owning package's, because a MODBIT patch and a TPO
+# patch are different materials and must NOT merge. That is why MODBIT's patch id is not here.
+SHARED_REGISTRY = (
+    "COUNTERFLASHING",      # metal lapping over a membrane's vertical termination. NOT `FLCAP` — that is a
+                            # coping cap for the TOP of a parapet (Joseph, 2026-11-01, correcting QA).
+    "SKYLIGHT_UNIT",        # the skylight ITSELF: detach-and-reset, or replace when it is damaged. Joseph,
+                            # 2026-11-04: a skylight gets no counterflashing because a 4in curb has no room
+                            # for one, so the unit comes off instead. Not SKYLIGHT_FLASH, which is the
+                            # coursed side's flashing KIT and a different part.
+)
+SHARED_REGISTRY_SET = frozenset(SHARED_REGISTRY)
+_SHARED_IN_USE = set()    # shared ids some registered package declared — the ONLY route into REGISTRY
+
+# The tier's WORDS live with its ids, and they are lazy in exactly the same way. QA put these in core's
+# label map first and the page-drift gate caught it within the hour: with only wood shake loaded the label
+# map then held two keys the registry did not, and "every page-side copy equals the composite registry" is
+# the whole point of that gate. A label that exists for an id that does not is the same drift in miniature.
+SHARED_DISPLAY_LABELS = {
+    "COUNTERFLASHING": "Counterflashing",
+    "SKYLIGHT_UNIT": "Skylight (detach and reset, or replace)",
+}
+
+
+def shared_labels_in_use():
+    """{id: label} for the shared ids a registered package actually declared — empty when none has."""
+    return {c: SHARED_DISPLAY_LABELS[c] for c in sorted(_SHARED_IN_USE) if c in SHARED_DISPLAY_LABELS}
 CORE_REGISTRY_HASH = "7a86a944c0652eb49e15875e9d9adc1c4cc5bc4d53ba3d90bf18f7855ec32d62"
 REGISTRY_HASH = "72dc2aee2f78e7e90eda4d4a1c437f4730c922255135371a390cf73931f83da6"   # LEGACY anchor (v74-v96)
 LEGACY_REGISTRY_HASH = REGISTRY_HASH
+
+# FRAME v106.6f — THE HISTORICAL RECEIPT NOW STANDS ON ITS OWN DATA.
+#
+# A2 5.1 records Joseph's requirement 1 verbatim: "Preserve historical registry receipts so existing claims
+# remain verifiable even after additional roofing packages are introduced." v97 met it by keeping the live
+# composite EQUAL to 72dc2aee with only wood_shake loaded, and the note above this block says the lazy shared
+# tier exists so that the assertion "stays literally true rather than being rewritten to stay true."
+#
+# That held for the event v97 was designed for — a PACKAGE being added — because a package's ids and the
+# shared ids are both lazy. It cannot hold when the VOCABULARY grows. A new billable id is reachable with
+# wood shake alone whichever tier it is put in: core is never lazy, and a shared or package-owned id enters
+# the moment the package that bills it declares it. QA checked all three tiers before touching this.
+#
+# A2 5.1 anticipates exactly that and says what should happen: verifiability rests on "the core hash and the
+# wood-shake package hash [being] each still pinned", and "the composite moving is the correct, visible
+# signal that the vocabulary grew."
+#
+# So the receipt is pinned as DATA here, not as an equality with the live registry. LEGACY_REGISTRY_33 is the
+# vocabulary of v74-v96 — the 33 ids any claim of that era was written against — and its fingerprint is
+# 72dc2aee, permanently, however much the live registry grows afterwards. A historical claim stays verifiable
+# because the list it was written against is still here to check against, which is what requirement 1 asks
+# for. The live composite is then free to move, visibly, with its own pinned value.
+#
+# This is a STRONGER form of the same promise: the old assertion survived package growth only, and this one
+# survives both. Nothing about any v74-v96 claim changes.
+LEGACY_REGISTRY_33 = (
+    "APPURT_IWS", "BOX_VENT", "CHIMNEY_CHASE_COVER", "CHIMNEY_FLASH", "DEBRIS_DISPOSAL",
+    "DRIP_EDGE", "ENDWALL_FLASH", "EQUIPMENT", "FIELD_COVERING", "FIELD_FELT",
+    "FIELD_TEAROFF", "FLUE_CAP", "GABLE_CORNICE", "GENERAL_LABOR", "HIGH_SLOPE_CHARGE",
+    "HIP_CAPS", "IWS", "PIPE_JACK_FLASH", "POWER_VENT", "RIDGE_CAPS",
+    "RIDGE_HIP_CAP", "RIDGE_VENT", "ROOFER_LABOR", "SHAKE_FIELD_RR", "SKYLIGHT_FLASH",
+    "STARTER", "STEEP_CHARGE", "STEP_FLASH", "TRANSITION_FLASH", "TURBINE_VENT",
+    "UNMAPPED", "VALLEY_METAL", "VENT_CAP",
+)
 
 
 def registry_fingerprint(ids):
@@ -131,7 +215,11 @@ REGISTRY_SET = _CompositeSet(CORE_REGISTRY)
 
 
 def _rebuild():
-    ids = sorted(CORE_REGISTRY_SET.union(*[set(v) for v in _PACKAGE_OWNED.values()]))
+    # FRAME v106.6: core, plus every registered package's OWN ids, plus only those SHARED ids a registered
+    # package declared it uses. The shared tier is lazy by construction — with no package using one, the
+    # composite is bit-for-bit what it was before the tier existed, which is what keeps the legacy anchor
+    # literally true rather than restated.
+    ids = sorted(CORE_REGISTRY_SET.union(_SHARED_IN_USE, *[set(v) for v in _PACKAGE_OWNED.values()]))
     list.__init__(REGISTRY, ids)                     # IN PLACE: every module's bound reference sees it
     set.clear(REGISTRY_SET); set.update(REGISTRY_SET, ids)
 
@@ -160,10 +248,14 @@ def register_package_categories(system_id, *, owns, uses=(), expected_hash=None,
     if core_clash:
         raise ValueError(f"{system_id}: cannot own {core_clash} — core already owns them. A package declares a "
                          f"core id in `uses`, it never re-owns it.")
-    not_core = [c for c in used if c not in CORE_REGISTRY_SET]
-    if not_core:
-        raise ValueError(f"{system_id}: `uses` names {not_core}, which are not core ids. A package may use only "
-                         f"core ids; ids it introduces go in `owns`.")
+    # FRAME v106.6: a package may use a CORE id or a SHARED id. Anything else is still a wiring error, and
+    # the message names both tiers so the fix is obvious — the old message said "core ids" and would now
+    # send a reader looking in the wrong place.
+    not_usable = [c for c in used if c not in CORE_REGISTRY_SET and c not in SHARED_REGISTRY_SET]
+    if not_usable:
+        raise ValueError(f"{system_id}: `uses` names {not_usable}, which are neither core ids nor shared ids "
+                         f"(shared: {list(SHARED_REGISTRY)}). A package may use core or shared ids; ids it "
+                         f"introduces go in `owns`.")
     if field_category is not None and field_category not in owned:
         raise ValueError(f"{system_id}: field_category {field_category!r} is not one of the ids it owns "
                          f"({list(owned)}); a package names its field covering among its own ids.")
@@ -183,6 +275,7 @@ def register_package_categories(system_id, *, owns, uses=(), expected_hash=None,
             raise ValueError(f"{system_id}: cannot own {clash} — package {other!r} already owns them.")
     _PACKAGE_OWNED[system_id] = owned
     _PACKAGE_USES[system_id] = used
+    _SHARED_IN_USE.update(c for c in used if c in SHARED_REGISTRY_SET)
     _PACKAGE_HASHES[system_id] = h
     if field_category is not None:
         _PACKAGE_FIELD[system_id] = field_category
@@ -226,8 +319,16 @@ def validate_category_id(category_id):
     """Return category_id if it is core or owned by a registered package; RAISE otherwise. UNMAPPED is a core
     id and is the legitimate catch-all for anything unrecognised."""
     _guard()
-    if category_id in CORE_REGISTRY_SET or any(category_id in ids for ids in _PACKAGE_OWNED.values()):
+    if (category_id in CORE_REGISTRY_SET or category_id in _SHARED_IN_USE
+            or any(category_id in ids for ids in _PACKAGE_OWNED.values())):
         return category_id
+    # A shared id NOT in use is deliberately invalid: it is vocabulary no loaded package emits, so a line
+    # carrying it is a wiring error, not a mapping question. The message says so rather than sending the
+    # reader to UNMAPPED.
+    if category_id in SHARED_REGISTRY_SET:
+        raise ValueError(f"category id {category_id!r} is a SHARED id, but no registered package declares it in "
+                         f"`uses` (registered: {list(registered_packages())}). A shared id enters the registry "
+                         f"only when a package says it emits it.")
     raise ValueError(f"category id {category_id!r} is in neither the core registry nor any registered package "
                      f"(registered: {list(registered_packages())}). Map it to UNMAPPED for human review, or load "
                      f"the package that owns it.")
@@ -269,21 +370,67 @@ def field_category_id(system_id):
     return _PACKAGE_FIELD[system_id]
 
 
+_DEFAULT_PACKAGE = None       # FRAME v106.4: set by roof_systems.register — see set_default_category_package
+
+
+def set_default_category_package(system_id):
+    """FRAME v106.4 — PUSHED DOWN from core/registry/roof_systems.py, so the claim is made ONCE.
+
+    A package declares `claims_unlabelled_profiles=True` at ONE place, its roof-system registration. That
+    declaration means "I own the pre-declaration case": a profile with no system_id, a claim with no
+    predominant_system_id, and a LINE with no material_profile_id are the same case wearing three hats.
+    `shared_category_registry` sits BELOW `roof_systems` in the import order and cannot ask it, so
+    `roof_systems.register` tells it instead. The alternative — a second `claims_undeclared` flag on
+    register_package_categories — would be the same declaration in two places, which is the defect this
+    codebase keeps collapsing; and a package that set one and forgot the other would be silently wrong.
+
+    At most one claimant exists: roof_systems.register enforces that before calling here.
+    """
+    global _DEFAULT_PACKAGE
+    if system_id is not None and system_id not in _PACKAGE_OWNED:
+        raise RegistryWiringError(
+            f"FRAME wiring: {system_id!r} claims unlabelled profiles but has not registered its category ids. Fix: "
+            f"call register_package_categories({system_id!r}, ...) before registering the roof system (a package's "
+            f"geometry module imports its own categories module for exactly this reason).")
+    _DEFAULT_PACKAGE = system_id
+
+
+def default_category_package():
+    """The package that DECLARED it owns the undeclared case, or None."""
+    return _DEFAULT_PACKAGE
+
+
 def sole_category_package(context="a call with no line in hand"):
-    """THE SOLE registered category package — for a site that holds no line and so cannot say which system it means.
-    BRIDGE 4 (narrowed): zero, or two or more, RAISES; core never picks. Reads THIS registry, which the bridge's boot
-    helper fills on every page, page 3 included."""
+    """The category package a site with NO LINE resolves to — it holds no line and so cannot say which system it
+    means.
+
+    FRAME v106.4 — BRIDGE 4 RETIRED HERE. This raised whenever two or more packages were registered, which made it
+    one of the hard gates on a second roofing package: measured, it took out `manual_carrier_entry` (five gates on
+    its own), three sites in the report renderer and two in `module3_caller`. Most of those sites were asking the
+    WRONG QUESTION — "which package?" when they only needed "is this category a field covering?" — and now use
+    `field_category_ids()` membership instead. What remains is the genuinely line-less case: a line built OUTSIDE an
+    engine (the assembly's eave-IWS and ridge-vent lines) carries no material_profile_id, and `line_system` falls
+    back here.
+
+    For that case the answer is the package that CLAIMED the undeclared case — the same declaration, pushed down
+    from roof_systems (see set_default_category_package). CORE STILL NEVER PICKS: a package declared this.
+
+    Zero packages RAISES. Two or more with NO claimant RAISES, naming them.
+    """
     pk = registered_packages()
     if not pk:
         raise RegistryWiringError(
             f"FRAME wiring: {context} — no roof-system package has registered its category ids, so there is no "
             f"answer. This is missing wiring, not a data problem. Fix: import the installed package's category module "
             f"(the bridge's shared boot helper does this for every page).")
+    if _DEFAULT_PACKAGE is not None:
+        return _DEFAULT_PACKAGE
     if len(pk) > 1:
         raise RegistryWiringError(
-            f"FRAME bridge 4: {context} — {len(pk)} roof-system packages are registered ({list(pk)}) and this site has "
-            f"no line to say which one it means, so core will not pick. This is the narrowed bridge 4: give the site a "
-            f"line (ScopeLine.material_profile_id) or a system id.")
+            f"FRAME bridge 4: {context} — {len(pk)} roof-system packages are registered ({list(pk)}), NONE claims "
+            f"unlabelled profiles, and this site has no line to say which one it means, so core will not pick. Fix: "
+            f"give the site a line (ScopeLine.material_profile_id) or a system id, or have the predominant package "
+            f"declare claims_unlabelled_profiles at registration. (v106.4)")
     return pk[0]
 
 
@@ -418,6 +565,51 @@ def power_vent_operation(row: Optional[Mapping[str, object]]) -> Optional[str]:
     return _POWER_VENT_OPERATION_ALIASES.get(raw)
 
 
+# =============================================================================================
+# FRAME v106.6 — THE SKYLIGHT'S OWN OPERATION, on the POWER_VENT pattern and deliberately not a new one
+#
+# Joseph, 2026-11-04: "Skylight doesn't get counterflashing… there's not typically room. A skylight curb is
+# minimum 4", so either skylight needs detached & Reset or replaced depending on if there's damage to the
+# skylight." So on a membrane the skylight UNIT comes off instead of being counterflashed — and whether it
+# goes back on or is replaced is a DAMAGE judgement FRAME cannot see.
+#
+# This is the same shape the power vent already has, and the same reasoning applies word for word: one
+# appurtenance type, two operations, and a SECOND human assertion that materially changes the scope, so it
+# is never automatic. Reusing that shape rather than inventing a second one is the point (the sidewall
+# ruling's own note: "Do not invent a second mechanism for this").
+SKYLIGHT_CATEGORY = "SKYLIGHT"
+SKYLIGHT_RESET = "RESET"            # detach and reset — the skylight is sound
+SKYLIGHT_REPLACE = "REPLACE"        # the skylight itself is damaged
+SKYLIGHT_OPERATIONS = (SKYLIGHT_RESET, SKYLIGHT_REPLACE)
+
+_SKYLIGHT_OPERATION_ALIASES = {
+    "RESET": SKYLIGHT_RESET, "D&R": SKYLIGHT_RESET, "DR": SKYLIGHT_RESET,
+    "DETACH_AND_RESET": SKYLIGHT_RESET, "DETACH & RESET": SKYLIGHT_RESET,
+    "DETACH AND RESET": SKYLIGHT_RESET, "DETACHED & RESET": SKYLIGHT_RESET,
+    "REPLACE": SKYLIGHT_REPLACE, "REPLACEMENT": SKYLIGHT_REPLACE, "NEW": SKYLIGHT_REPLACE,
+}
+
+
+def is_skylight(row):
+    """Is this appurtenance row a skylight? Reads the same key the carve test reads, so one payload shape."""
+    if not isinstance(row, Mapping):
+        return False
+    return str(row.get("kind_label") or row.get("type") or "").strip().upper() == SKYLIGHT_CATEGORY
+
+
+def skylight_operation(row):
+    """The normalized operation on a skylight row, or None when it is not a skylight / not stated.
+
+    NEVER GUESSES, and unlike the power vent there is no fail-safe branch to fall back on: a power vent that
+    does not say carves, because carving is the conservative answer. A skylight that does not say has no
+    conservative answer — reset and replace are different materials, not different areas — so the caller
+    emits the line at CONFIRM with the operation unstated rather than picking one."""
+    if not is_skylight(row):
+        return None
+    raw = str(row.get("operation") or row.get("skylight_operation") or "").strip().upper()
+    return _SKYLIGHT_OPERATION_ALIASES.get(raw)
+
+
 def appurtenance_carves(row: Optional[Mapping[str, object]]) -> bool:
     """Does this appurtenance row disturb the shake field?
 
@@ -433,3 +625,26 @@ def appurtenance_carves(row: Optional[Mapping[str, object]]) -> bool:
     if not is_power_vent(row):
         return True
     return power_vent_operation(row) != POWER_VENT_COVER
+
+
+def user_category_or_unmapped(other_category):
+    """A user-supplied OTHER category, validated against this registry — or UNMAPPED for human review.
+
+    THE ONE COPY OF THIS RULE. page2.html states the contract in its own words, beside the list of
+    categories it offers: "The engine still validates against REGISTRY_28, so this is purely a UI guard
+    - no engine change." The coursed side did validate; the membrane side did not, and emitted whatever
+    string the payload carried as a category id. Measured on v106.6f: a MODBIT facet given
+    other_category "totally bogus !!" billed a line whose category_id WAS "totally bogus !!", which the
+    comparison then has to match and the report has to print. The coursed side routed the same payload
+    to UNMAPPED, which UNMAPPED_REVIEW surfaces for a human.
+
+    WHICH AUTHORITY, and why this one: REGISTRY is the LIVE composite, not a frozen list. With both
+    packages registered it carries 37 ids including MODBIT_FIELD_RR and MODBIT_PATCH, so validating a
+    membrane facet's category against it cannot wrongly reject a category MODBIT itself owns. A package
+    that registers new ids widens this check by registering, not by editing it.
+
+    This is deliberately NOT per-package behaviour. What a covering does when disturbed is the package's
+    business; what counts as a category id at all is the registry's, and two packages answering it
+    differently is the divergence this function exists to end."""
+    cat = str(other_category).strip() if other_category else ""
+    return cat if cat in REGISTRY else "UNMAPPED"

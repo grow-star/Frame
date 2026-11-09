@@ -243,6 +243,90 @@
 
     .diagram-placement-prompt.visible { display: block; }
 
+    /* FRAME v105.5 — WHICH COVERING IS ON WHICH FACET. The list of coverings is never written here or in
+       the script: it comes from the engine (registeredRoofSystems()). With ONE covering installed there is
+       nothing to say, so the bar stays hidden and the diagram is unchanged. Colours are by POSITION in the
+       engine's list, never by a covering's name. */
+    .covering-bar {
+      display: none;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+      margin-top: 8px;
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--muted);
+    }
+    .covering-bar.visible { display: flex; }
+    .covering-bar select { font-size: 12px; }
+    .covering-counts { color: var(--ink); }
+    .covering-swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 4px;
+      border-radius: 3px;
+      border: 1px solid rgba(27, 38, 56, 0.35);
+      vertical-align: -1px;
+    }
+    .assign-covering.active {
+      border-color: var(--primary);
+      color: #fff;
+      background: var(--primary);
+    }
+    .covering-choice-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 30;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(246, 248, 252, 0.94);
+    }
+    .covering-choice-overlay.visible { display: flex; }
+    .covering-choice-card {
+      display: grid;
+      gap: 10px;
+      max-width: 340px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 16px 40px rgba(27, 38, 56, 0.18);
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--ink);
+    }
+    .covering-picker-option { text-align: left; }
+    /* FRAME v106.2: with ONE covering installed there is nothing to choose, so the selector is hidden
+       while the bar itself stays visible — the bar carries "Assign covering", which opens the picker that
+       holds "Not in this scope". */
+    #coveringPredominantWrap.hidden { display: none; }
+    /* FRAME v106.2: which facets are out of scope, stated PERSISTENTLY. The status box is transient — the
+       next compute overwrites it — so a bulk skip announced there is a skip the user never sees, which is
+       the invisible under-scope this build exists to avoid. */
+    .covering-excluded-note { margin-left: 0.6rem; color: #555; font-size: 0.85em; }
+    .covering-picker-option.current { border-color: var(--primary); }
+    svg.multi-covering .facet.covering-0:not(.replaced) { fill: rgba(47, 111, 237, 0.10); }
+    svg.multi-covering .facet.covering-1:not(.replaced) { fill: rgba(214, 137, 16, 0.22); }
+    svg.multi-covering .facet.covering-2:not(.replaced) { fill: rgba(30, 150, 110, 0.22); }
+    svg.multi-covering .facet.covering-3:not(.replaced) { fill: rgba(200, 70, 140, 0.20); }
+    svg.multi-covering .facet.covering-4:not(.replaced) { fill: rgba(110, 110, 120, 0.26); }
+    svg.multi-covering .facet.covering-5:not(.replaced) { fill: rgba(20, 160, 190, 0.22); }
+    svg.multi-covering .facet.covering-unassigned:not(.replaced) { fill: rgba(220, 40, 40, 0.12); stroke-dasharray: 4 3; }
+    /* FRAME v106.2 — an EXCLUDED facet, hatched and greyed. NOT scoped under svg.multi-covering, unlike
+       every rule above: the exclusion is the one case a ONE-covering roof must still show, because the user
+       has said this facet is outside the claim. Mirrors the .covering-swatch rule below it. */
+    .facet.covering-excluded:not(.replaced) { fill: rgba(90, 90, 95, 0.30); stroke-dasharray: 2 3; }
+    .covering-swatch.covering-excluded { background: rgba(90, 90, 95, 0.45); }
+    .covering-swatch.covering-0 { background: rgba(47, 111, 237, 0.30); }
+    .covering-swatch.covering-1 { background: rgba(214, 137, 16, 0.55); }
+    .covering-swatch.covering-2 { background: rgba(30, 150, 110, 0.55); }
+    .covering-swatch.covering-3 { background: rgba(200, 70, 140, 0.50); }
+    .covering-swatch.covering-4 { background: rgba(110, 110, 120, 0.60); }
+    .covering-swatch.covering-5 { background: rgba(20, 160, 190, 0.55); }
+
     .facet {
       fill: rgba(47, 111, 237, 0.055);
       stroke: #6d7f98;
@@ -429,6 +513,27 @@
     }
 
     .penetration.undefined { fill: #8a94a6; }
+    /* FRAME v106.6g2 / B2 — an item whose declared type its measurement disagrees with, still
+       unresolved. A RING, not a fill: the fill already carries repair-event vs not, and that
+       answer must stay readable while this one is pending. So the marker keeps its own colour
+       and gains an outline, which also survives the marker being small on a zoomed-out roof. */
+    .penetration.review-pending { stroke: #b45309; stroke-width: 3px; paint-order: stroke; }
+    .review-reason {
+      margin-top: 8px; padding: 8px 10px; border-radius: 6px;
+      background: #fff7ed; border: 1px solid #fdba74; color: #7c2d12;
+      font-size: 12px; line-height: 1.45;
+    }
+    .review-confirm-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .review-confirm-row button { flex: 1 1 auto; min-height: 36px; }
+    .review-confirmed { color: #166534; font-size: 12px; margin-top: 6px; }
+    /* B2r1 / B2-F01: the user-item review block. Grouped so the question, the explicit answer and
+       the correction controls read as one unit, and so the Confirm PLACEMENT button below it stays
+       visibly a different action about a different thing. */
+    .review-block { margin-top: 8px; }
+    .review-correct-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .review-correct-row label { flex: 1 1 140px; font-size: 12px; font-weight: 700; }
+    .review-correct-row select { width: 100%; min-height: 36px; }
+    .review-correct-row .user-app-error { flex: 1 1 100%; }
     .penetration.repair-event { fill: var(--danger); }
     .penetration.not-repair-event { fill: #188038; }
     .penetration.user-incomplete { fill: #f6a800; }
@@ -1058,10 +1163,18 @@
             <button class="replace-roof" id="replaceRoofButton" type="button" disabled>Replace roof (all slopes)</button>
             <button class="danger" id="clearButton" type="button" disabled>Clear</button>
           </div>
+          <div class="covering-bar" id="coveringBar" aria-label="Roof covering by facet">
+            <label id="coveringPredominantWrap">Most of the roof <select id="predominantCoveringSelect"></select></label>
+            <button class="secondary assign-covering" id="assignCoveringButton" type="button" aria-pressed="false">Assign covering</button>
+            <span class="covering-counts" id="coveringCounts"></span>
+            <span class="covering-excluded-note" id="coveringExcludedNote"></span>
+          </div>
         </div>
         <div class="roof-wrap" aria-label="Clickable roof drawing">
           <button class="secondary diagram-add-app" id="diagramAddAppButton" type="button" title="Add appurtenance" aria-label="Add appurtenance">⊕</button>
           <div class="diagram-placement-prompt" id="diagramPlacementPrompt">Tap a roof facet to place the appurtenance</div>
+          <div class="diagram-placement-prompt" id="coveringAssignPrompt">Tap a roof facet to choose its covering</div>
+          <div class="covering-choice-overlay" id="coveringChoiceOverlay" role="dialog" aria-label="Choose the roof covering"></div>
           <div class="diagram-nav" aria-label="Diagram navigation controls">
             <button class="secondary" id="zoomOutButton" type="button" aria-label="Zoom out">−</button>
             <button class="secondary" id="zoomResetButton" type="button" title="Reset view" aria-label="Reset view">↺</button>
@@ -1179,6 +1292,9 @@
 
   <script type="module">
     import { ready, roofLayout, workbenchUpdate, diagramData, bundledXmlText, transitionStates } from './pyodide_bridge.js';
+    // FRAME v105.5: the namespace import reads registeredRoofSystems WITHOUT making it a hard link-time
+    // requirement — a bridge that predates it (or a test stub) leaves the page exactly as it was.
+    import * as RoofBridge from './pyodide_bridge.js';
 
     const state = {
       xmlText: '',
@@ -1230,7 +1346,36 @@
       activeUserAppCreate: null,
       userAppDrag: null,
       tapToPlaceMode: false,
+      // FRAME v105.5 — WHICH COVERING IS ON WHICH FACET. The ridgeVents pattern: id-keyed, user-declared.
+      //   predominantSystem: the covering the USER DECLARED as most of the roof (null = nothing declared).
+      //     With ONE covering installed the engine already knows it, so it is the DEFAULT without being a
+      //     declaration (effectivePredominantSystem) — nothing to ask, nothing unassigned, and the claim's
+      //     shape is unchanged. With TWO OR MORE installed and none declared, the user must choose first.
+      //   facetSystems: EXCEPTIONS ONLY (face_id -> system_id) — the registry's own shape.
+      //   assignSystemMode: owns the tap exactly as tapToPlaceMode does.
+      //   registeredSystems: [{system_id, label}] FROM THE ENGINE (registeredRoofSystems) — never a literal.
+      //   excludedFacets: FRAME v106.2 — facets this claim DOES NOT SCOPE. A SEPARATE set, never a value in
+      //     facetSystems, because an exclusion is not a roof system: declaring one requires a REGISTERED
+      //     system, and the user knows only what the facet is NOT (Joseph, 2026-11-02: "It doesn't matter
+      //     what that surface is. We just know it's not wood shake."). The engine REFUSES a facet that is in
+      //     both keys, so the two are kept mutually exclusive here, at both setters.
+      predominantSystem: null,
+      facetSystems: new Map(),
+      excludedFacets: new Set(),
+      assignSystemMode: false,
+      registeredSystems: [],
       activePenetrationPopupId: null,
+      // FRAME v106.6g2 / B2 — the engine's item-specific size/label review, as returned by
+      // workbenchUpdate. RECOMPUTED by the engine on every update and simply stored here; this
+      // page never decides who is suspicious, because the threshold, the standard bases and the
+      // flashing methods live in the shared catalog and must not be duplicated in JavaScript.
+      appurtenanceReview: { ok: true, items: [], unresolved: [], unresolved_ids: [] },
+      // key -> true for each review the user has EXPLICITLY confirmed. Keyed on the engine's
+      // decision_key, which covers the roof, the item/group, the declared type and category and
+      // the measured dimensions — so a change to any of those produces a different key and the
+      // confirmation simply no longer matches. Invalidation needs no code here, and that is the
+      // point: a hand-written invalidation rule is a rule that can forget a field.
+      reviewConfirmations: new Map(),
       viewport: { scale: 1, x: 0, y: 0, initialized: false },
       pointerTracker: {
         active: new Map(),
@@ -1278,6 +1423,14 @@
     const addUserAppButton = document.getElementById('addUserAppButton');
     const diagramAddAppButton = document.getElementById('diagramAddAppButton');
     const diagramPlacementPrompt = document.getElementById('diagramPlacementPrompt');
+    const coveringBar = document.getElementById('coveringBar');
+    const predominantCoveringSelect = document.getElementById('predominantCoveringSelect');
+    const coveringPredominantWrap = document.getElementById('coveringPredominantWrap');   // v106.2
+    const assignCoveringButton = document.getElementById('assignCoveringButton');
+    const coveringCounts = document.getElementById('coveringCounts');
+    const coveringExcludedNote = document.getElementById('coveringExcludedNote');   // v106.2
+    const coveringAssignPrompt = document.getElementById('coveringAssignPrompt');
+    const coveringChoiceOverlay = document.getElementById('coveringChoiceOverlay');
     const userAppForm = document.getElementById('userAppForm');
     const selectAllButton = document.getElementById('selectAllButton');
     const replaceRoofButton = document.getElementById('replaceRoofButton');
@@ -1609,6 +1762,7 @@
       clearSvg();
       if (!state.viewport.initialized) resetViewport();
 
+      renderCoveringUi();                 // FRAME v105.5: the covering bar, the shading switch, the required choice
       const viewportLayer = makeSvgEl('g', { id: 'diagramViewport' });
       const affectedLayer = makeSvgEl('g', { id: 'affectedLayer' });
       const facetLayer = makeSvgEl('g', { id: 'facetLayer' });
@@ -1628,7 +1782,7 @@
         if (!Array.isArray(facet.polygon) || facet.polygon.length < 3) continue;
         const isReplaced = state.replacedFacets.has(String(facet.facet_id));
         const facetPoly = makeSvgEl('polygon', {
-          class: 'facet' + (isReplaced ? ' replaced' : ''),
+          class: 'facet' + (isReplaced ? ' replaced' : '') + coveringClassForFacet(facet.facet_id),
           points: pointsAttr(facet.polygon),
           'data-facet-id': facet.facet_id
         });
@@ -1637,7 +1791,7 @@
         // still win; only an interior tap reaches here. Placement mode owns the tap when active, and a
         // pan/pinch is never treated as a tap. NO long-press.
         facetPoly.addEventListener('click', function (event) {
-          if (state.tapToPlaceMode || state.busy) return;
+          if (state.tapToPlaceMode || state.assignSystemMode || state.busy) return;
           if (state.suppressNextClick || state.pointerTracker.moved || state.pointerTracker.isPinching) return;
           event.stopPropagation();
           requestReplacementFromDiagram(String(facet.facet_id));
@@ -1854,8 +2008,12 @@
 
     function penetrationMarkerState(penetrationId) {
       const def = getPenetrationDefinition(penetrationId);
-      if (!def.type || (def.repairEvent !== true && def.repairEvent !== false)) return 'undefined';
-      return def.repairEvent === true ? 'repair-event' : 'not-repair-event';
+      // FRAME v106.6g2 / B2 — the pending-review ring is ADDITIVE to the existing state class, so
+      // the marker keeps saying whether it is a repair event while also saying it needs a decision.
+      // Replacing the state would have lost the answer the user already gave.
+      const pending = reviewIsPending(reviewForItemId(penetrationId)) ? ' review-pending' : '';
+      if (!def.type || (def.repairEvent !== true && def.repairEvent !== false)) return 'undefined' + pending;
+      return (def.repairEvent === true ? 'repair-event' : 'not-repair-event') + pending;
     }
 
     function updatePenetrationMarkerColors() {
@@ -1968,6 +2126,17 @@
       title.className = 'penetration-popup-title';
       title.textContent = `${id} · host ${host}`;
       popup.appendChild(title);
+
+      // FRAME v106.6g2 / B2 — the size/label question, on the item it is about, with THAT item's
+      // own figures. The sentence comes from the engine (appurtenance_review.reason_text), so the
+      // numbers in it are the numbers the estimator compared and no example figures from another
+      // roof can appear here. Correcting the type uses the Type select already below; confirming is
+      // its own explicit button. Closing this popup confirms nothing.
+      // B2r1: through the ONE shared builder (`buildXmlReviewBlock`), which also puts this question
+      // on the penetration LIST CARD. B2 built it inline here and only here, which is what left the
+      // collapsed shortlist listing pending items with no way to answer them (finding B2-Q01).
+      const _xrev = buildXmlReviewBlock(id);
+      if (_xrev) popup.appendChild(_xrev);
 
       const typeLabel = document.createElement('label');
       typeLabel.textContent = 'Type';
@@ -2189,8 +2358,15 @@
     }
 
     function userAppMarkerState(item) {
-      if (!isUserAppComplete(item)) return USER_APP_AMBER;
-      return item.repairEvent === true ? 'repair-event' : 'not-repair-event';
+      // B2r1 / B2-F01: the review ring is ADDITIVE. The placement / repair-event token is decided
+      // first and kept, then ' review-pending' is appended — so raising the size question never
+      // overwrites the answer the user already gave about this item, exactly as on the XML path
+      // (penetrationMarkerState). The ring itself needs no new CSS: a user marker already carries
+      // the `penetration` class, so the existing `.penetration.review-pending` rule draws it.
+      const base = !isUserAppComplete(item)
+        ? USER_APP_AMBER
+        : (item.repairEvent === true ? 'repair-event' : 'not-repair-event');
+      return base + (reviewIsPending(reviewForItemId(item && item.designator)) ? ' review-pending' : '');
     }
 
     function updateUserAppMarkerColors() {
@@ -2202,6 +2378,7 @@
     }
 
     function setTapToPlaceMode(on) {
+      if (on && state.assignSystemMode) setAssignSystemMode(false);   // ONE mode owns the tap at a time
       state.tapToPlaceMode = Boolean(on);
       if (diagramAddAppButton) diagramAddAppButton.classList.toggle('active', state.tapToPlaceMode);
       if (diagramAddAppButton) diagramAddAppButton.setAttribute('aria-pressed', state.tapToPlaceMode ? 'true' : 'false');
@@ -2275,6 +2452,380 @@
       setTapToPlaceMode(false);
       openUserAppCreatePopup(hostFacetId, placedShared, viewportPoint(placedShared));
       setStatus('loading', `Define the appurtenance on ${faceLabel(hostFacetId)}, then drag/confirm its marker.`);
+    }
+
+    // ===================== FRAME v105.5 — WHICH COVERING IS ON WHICH FACET =====================
+    // The list of coverings comes ONLY from the engine (registeredRoofSystems): no covering is named
+    // anywhere in this file. The page declares; the engine routes (roof_system_keys /
+    // validate_roof_system_selection in core's registry). Two properties are not optional:
+    //   * NOTHING DECLARED -> NEITHER key is emitted, so a claim that never opens the control has exactly
+    //     the shape it had before v105.5 (every saved claim keeps working).
+    //   * an exception naming the predominant covering is DROPPED — one roof, one shape.
+    function coveringSystems() {
+      return Array.isArray(state.registeredSystems) ? state.registeredSystems : [];
+    }
+
+    function coveringIsInstalled(systemId) {
+      return coveringSystems().some((row) => row.system_id === systemId);
+    }
+
+    function coveringLabel(systemId) {
+      const row = coveringSystems().find((r) => r.system_id === systemId);
+      return (row && row.label) || String(systemId || '');
+    }
+
+    function coveringIndex(systemId) {
+      return coveringSystems().findIndex((row) => row.system_id === systemId);
+    }
+
+    // The covering every facet carries unless it is an exception. The DECLARED one when the user chose;
+    // otherwise, with exactly ONE covering installed, that one (there is nothing to choose). With two or more
+    // installed and none declared there is NO default — never the first in the list.
+    function effectivePredominantSystem() {
+      if (state.predominantSystem) return state.predominantSystem;
+      const systems = coveringSystems();
+      return systems.length === 1 ? systems[0].system_id : null;
+    }
+
+    function coveringChoiceRequired() {
+      return coveringSystems().length >= 2 && !state.predominantSystem;
+    }
+
+    function facetCovering(faceId) {
+      return state.facetSystems.get(String(faceId)) || effectivePredominantSystem();
+    }
+
+    // FRAME v106.2 — is this facet outside the claim's scope? Asked wherever a covering is asked for, so an
+    // excluded facet never reads as "carrying the predominant covering".
+    function isFacetExcluded(faceId) {
+      return state.excludedFacets.has(String(faceId));
+    }
+
+    // FRAME v106.2 — THE ONE list of what "scoped" means for a facet, in the engine's own words, so the two
+    // directions of the refusal can never disagree about it. The engine's refusal names the same work
+    // (module2_assembly's _SCOPING_KEYS); a valley pick is included because selectedValleys is facet-keyed
+    // and becomes single_valley_repairs / multi_valley_facets, which the engine refuses on an excluded facet.
+    function scopedWorkOnFacet(faceId) {
+      const id = String(faceId);
+      const out = [];
+      if (state.replacedFacets.has(id)) out.push('a full replacement');
+      for (const faces of state.selectedValleys.values()) {
+        if (faces && faces.has(id)) { out.push('a valley repair'); break; }
+      }
+      if (state.highSlopeFacets.has(id)) out.push('a high-slope flag');
+      if ((state.userAppurtenances || []).some((it) => it && String(it.hostFacetId || '') === id)) {
+        out.push('an appurtenance you placed');
+      }
+      return out;
+    }
+
+    // The OTHER direction: a scoping setter refuses an excluded facet, with the mirror wording. Returns
+    // true when it refused, so each caller can simply bail.
+    function refuseIfExcluded(faceId, what) {
+      const id = String(faceId);
+      if (!isFacetExcluded(id)) return false;
+      setStatus('error', `${faceLabel(id)} is marked as not in this scope, so it cannot take ${what}. `
+        + 'Put the facet back in scope first (tap it under "Assign covering").');
+      return true;
+    }
+
+    // Shading is drawn only when there is more than one covering to tell apart; a one-covering roof draws
+    // exactly as it always has.
+    function coveringClassForFacet(faceId) {
+      // FRAME v106.2: an EXCLUDED facet is shaded whatever the covering count — it is the one case where a
+      // one-covering roof still needs telling apart, because the user has said this facet is not in scope.
+      if (isFacetExcluded(faceId)) return ' covering-excluded';
+      if (coveringSystems().length < 2) return '';
+      const idx = coveringIndex(facetCovering(faceId));
+      return idx < 0 ? ' covering-unassigned' : ` covering-${idx % 6}`;
+    }
+
+    // §1c — the emission. Spread into buildUiSelection(). ABSENT when nothing is declared.
+    function roofSystemKeysForEngine() {
+      const out = {};
+      if (state.predominantSystem) out.predominant_system_id = state.predominantSystem;
+      const predominant = effectivePredominantSystem();
+      const ex = {};
+      for (const [faceId, sysId] of state.facetSystems.entries()) {
+        if (sysId && sysId !== predominant) ex[String(faceId)] = String(sysId);
+      }
+      if (Object.keys(ex).length) out.facet_systems = ex;
+      // FRAME v106.2 — the exclusions, sorted so the emitted shape is stable across taps (the engine treats
+      // the list as a set, but a stable order keeps the claim record and the diff readable). ABSENT when
+      // nothing is excluded, so a claim that excludes nothing emits exactly what it did at v106.1.
+      // A facet is never in BOTH keys: both setters clear the other, and the engine raises if they overlap.
+      if (state.excludedFacets.size) {
+        out.excluded_facets = Array.from(state.excludedFacets).map(String).sort();
+      }
+      return out;
+    }
+
+    async function loadRegisteredSystems() {
+      let rows = [];
+      try {
+        rows = typeof RoofBridge.registeredRoofSystems === 'function' ? await RoofBridge.registeredRoofSystems() : [];
+      } catch (_e) {
+        rows = [];   // the engine is still the authority: it validates any declaration at scope time
+      }
+      state.registeredSystems = (Array.isArray(rows) ? rows : [])
+        .filter((r) => r && r.system_id)
+        .map((r) => ({ system_id: String(r.system_id), label: String(r.label || r.system_id) }));
+    }
+
+    function coveringCountsText() {
+      const counts = new Map();
+      for (const facet of (state.roofData && state.roofData.facets) || []) {
+        const sys = facetCovering(facet.facet_id) || '';
+        counts.set(sys, (counts.get(sys) || 0) + 1);
+      }
+      const parts = [];
+      for (const row of coveringSystems()) {
+        if (counts.get(row.system_id)) parts.push([row.system_id, `${row.label} ${counts.get(row.system_id)}`]);
+      }
+      for (const [sys, n] of counts.entries()) {
+        if (!coveringIsInstalled(sys)) parts.push([sys, `${sys ? coveringLabel(sys) : 'not chosen'} ${n}`]);
+      }
+      return parts;
+    }
+
+    function renderCoveringUi() {
+      const systems = coveringSystems();
+      const multi = systems.length >= 2;
+      svg.classList.toggle('multi-covering', multi);
+      // FRAME v106.2 — THE BAR IS SHOWN AT ANY COVERING COUNT, because "Not in this scope" lives in the
+      // picker the bar's Assign button opens, and the DEPLOYED engine registers exactly ONE covering. At
+      // v106.2's first shape the bar was still gated on `multi`, so the exclusion existed only in a
+      // configuration the live site does not have — the control was unreachable on every real claim
+      // (ledger entry 119, QA error 70). Nothing is defaulted by showing it: the "most of the roof"
+      // selector is HIDDEN when there is nothing to choose, and the emission still needs a tap.
+      if (coveringBar) coveringBar.classList.toggle('visible', !!state.roofData && systems.length >= 1);
+      if (coveringPredominantWrap) coveringPredominantWrap.classList.toggle('hidden', !multi);
+      if (predominantCoveringSelect) {
+        predominantCoveringSelect.innerHTML = '';
+        if (!state.predominantSystem) {
+          const blank = document.createElement('option');
+          blank.value = ''; blank.textContent = '— choose —';
+          predominantCoveringSelect.appendChild(blank);
+        }
+        for (const row of systems) {
+          const opt = document.createElement('option');
+          opt.value = row.system_id; opt.textContent = row.label;
+          predominantCoveringSelect.appendChild(opt);
+        }
+        if (state.predominantSystem && !coveringIsInstalled(state.predominantSystem)) {
+          const opt = document.createElement('option');      // shown as saved; the engine will refuse it, loudly
+          opt.value = state.predominantSystem; opt.textContent = state.predominantSystem;
+          predominantCoveringSelect.appendChild(opt);
+        }
+        predominantCoveringSelect.value = state.predominantSystem || '';
+      }
+      if (coveringExcludedNote) {
+        // FRAME v106.2 — PERSISTENT, not a status flash. While any facet is excluded the bar says so, so
+        // the subtraction is visible at all times and a bulk action's skip needs no transient message.
+        const names = Array.from(state.excludedFacets).map(faceLabel).sort();
+        coveringExcludedNote.textContent = names.length ? `Not in this scope: ${names.join(', ')}` : '';
+      }
+      if (assignCoveringButton) assignCoveringButton.disabled = state.busy || !state.roofData || coveringChoiceRequired();
+      if (coveringCounts) {
+        coveringCounts.innerHTML = '';
+        coveringCountsText().forEach(([sys, text], i) => {
+          if (i) coveringCounts.appendChild(document.createTextNode(' · '));
+          const item = document.createElement('span');
+          item.setAttribute('data-covering', sys);
+          const sw = document.createElement('span');
+          const idx = coveringIndex(sys);
+          sw.className = 'covering-swatch ' + (idx < 0 ? 'covering-unassigned' : `covering-${idx % 6}`);
+          item.appendChild(sw);
+          item.appendChild(document.createTextNode(text));
+          coveringCounts.appendChild(item);
+        });
+      }
+      renderCoveringChoiceOverlay();
+    }
+
+    // §1d — two or more coverings installed and none declared: the diagram is NOT usable until the user
+    // says which covering is most of the roof. No default, never the first in the list.
+    function renderCoveringChoiceOverlay() {
+      if (!coveringChoiceOverlay) return;
+      const required = !!state.roofData && coveringChoiceRequired();
+      coveringChoiceOverlay.classList.toggle('visible', required);
+      coveringChoiceOverlay.innerHTML = '';
+      if (!required) return;
+      const card = document.createElement('div');
+      card.className = 'covering-choice-card';
+      const title = document.createElement('div');
+      title.textContent = 'Which covering is MOST of this roof? Facets that differ can be assigned next.';
+      card.appendChild(title);
+      for (const row of coveringSystems()) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'secondary covering-picker-option';
+        b.setAttribute('data-system-id', row.system_id);
+        b.textContent = row.label;
+        b.addEventListener('click', () => setPredominantSystem(row.system_id));
+        card.appendChild(b);
+      }
+      coveringChoiceOverlay.appendChild(card);
+    }
+
+    function setPredominantSystem(systemId) {
+      if (state.busy) return;
+      state.predominantSystem = systemId ? String(systemId) : null;
+      closeCoveringPicker();
+      hideStatus();
+      handleSelectionChanged();
+    }
+
+    function setAssignSystemMode(on) {
+      if (on && state.tapToPlaceMode) setTapToPlaceMode(false);       // ONE mode owns the tap at a time
+      state.assignSystemMode = Boolean(on);
+      if (assignCoveringButton) {
+        assignCoveringButton.classList.toggle('active', state.assignSystemMode);
+        assignCoveringButton.setAttribute('aria-pressed', state.assignSystemMode ? 'true' : 'false');
+      }
+      if (coveringAssignPrompt) coveringAssignPrompt.classList.toggle('visible', state.assignSystemMode);
+      if (!state.assignSystemMode) closeCoveringPicker();
+      if (state.assignSystemMode) {
+        closePenetrationPopup();
+        closeUserAppPopup();
+        closeUserAppCreatePopup();
+        setStatus('loading', 'Tap a roof facet to choose its covering. Tap "Assign covering" again or the gray margin to finish.');
+      }
+    }
+
+    function toggleAssignSystemMode() {
+      if (state.busy || !state.roofData || coveringChoiceRequired()) return;
+      if (state.assignSystemMode) {
+        setAssignSystemMode(false);
+        hideStatus();
+      } else {
+        setAssignSystemMode(true);
+      }
+    }
+
+    function coveringPickerEl() {
+      let popup = document.getElementById('coveringPickerPopup');
+      if (popup || !roofWrap) return popup;
+      popup = document.createElement('div');
+      popup.id = 'coveringPickerPopup';
+      popup.className = 'penetration-popup';
+      popup.addEventListener('click', (event) => event.stopPropagation());
+      popup.addEventListener('pointerdown', (event) => event.stopPropagation());
+      roofWrap.appendChild(popup);
+      return popup;
+    }
+
+    function closeCoveringPicker() {
+      const popup = document.getElementById('coveringPickerPopup');
+      if (popup) { popup.className = 'penetration-popup'; popup.innerHTML = ''; popup.removeAttribute('data-facet-id'); }
+    }
+
+    // A PICKER of every installed covering — not a cycle (a cycle is unusable at five coverings).
+    function openCoveringPicker(faceId, screenPoint) {
+      const popup = coveringPickerEl();
+      if (!popup) return;
+      const id = String(faceId);
+      popup.innerHTML = '';
+      popup.setAttribute('data-facet-id', id);
+      const close = document.createElement('button');
+      close.type = 'button'; close.className = 'penetration-popup-close'; close.textContent = '×';
+      close.addEventListener('click', closeCoveringPicker);
+      popup.appendChild(close);
+      const title = document.createElement('div');
+      title.className = 'penetration-popup-title';
+      title.textContent = `Covering on ${faceLabel(id)}`;
+      popup.appendChild(title);
+      const excluded = isFacetExcluded(id);
+      const current = excluded ? null : facetCovering(id);
+      for (const row of coveringSystems()) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'secondary covering-picker-option' + (row.system_id === current ? ' current' : '');
+        b.setAttribute('data-system-id', row.system_id);
+        b.textContent = row.label + (row.system_id === effectivePredominantSystem() ? ' (most of the roof)' : '');
+        b.addEventListener('click', () => setFacetCovering(id, row.system_id));
+        popup.appendChild(b);
+      }
+      // FRAME v106.2 — THE EXCLUSION, as its own choice and NOT an entry in the covering list. It is not a
+      // roof system: the user is saying what the facet is NOT. Tapping it again puts the facet back in scope.
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'secondary covering-picker-option covering-picker-exclude' + (excluded ? ' current' : '');
+      x.setAttribute('data-exclude', '1');
+      x.textContent = excluded ? 'Not in this scope — tap to include' : 'Not in this scope (different system)';
+      x.addEventListener('click', () => setFacetExcluded(id, !excluded));
+      popup.appendChild(x);
+      popup.className = 'penetration-popup visible';
+      positionPenetrationPopup(popup, screenPoint);
+    }
+
+    // Choosing the predominant covering for a facet REMOVES its exception (the default is the predominant);
+    // anything else records the exception. Mode stays on so several facets can be assigned in a row.
+    function setFacetCovering(faceId, systemId) {
+      if (state.busy) return;
+      const id = String(faceId);
+      if (!systemId || systemId === effectivePredominantSystem()) state.facetSystems.delete(id);
+      else state.facetSystems.set(id, String(systemId));
+      // FRAME v106.2: choosing a covering puts the facet back IN scope. The engine raises on a facet that is
+      // in both keys, so the mutual exclusion is enforced at BOTH setters, not just one.
+      state.excludedFacets.delete(id);
+      closeCoveringPicker();
+      handleSelectionChanged();
+      if (state.assignSystemMode) {
+        setStatus('loading', `${faceLabel(id)}: ${coveringLabel(facetCovering(id))}. Tap another facet, or "Assign covering" to finish.`);
+      }
+    }
+
+    // FRAME v106.2 — mark a facet as outside this claim's scope, or put it back. The MIRROR of
+    // setFacetCovering: excluding clears any covering exception, exactly as choosing a covering clears the
+    // exclusion, so the two engine keys can never both name the same facet.
+    function setFacetExcluded(faceId, on) {
+      if (state.busy) return;
+      const id = String(faceId);
+      // FRAME v106.2 — REFUSE RATHER THAN EMIT A SELECTION THE ENGINE WILL REJECT, IN BOTH DIRECTIONS.
+      // The engine raises when a facet is both excluded and scoped, so either order must be refused:
+      // scoping an excluded facet (guarded at each scoping setter, via refuseIfExcluded) and excluding a
+      // scoped one (here). A one-directional guard does not satisfy the principle — it only moves where
+      // the raw ValueError appears. Page 2 names what is in the way and changes nothing, which is the
+      // engine's own choice: refuse, do not guess which the user meant.
+      if (on) {
+        const blocking = scopedWorkOnFacet(id);
+        if (blocking.length) {
+          closeCoveringPicker();
+          setStatus('error', `${faceLabel(id)} still has ${blocking.join(' and ')}. Remove that first, then `
+            + 'mark the facet as not in this scope.');
+          return;
+        }
+      }
+      if (on) {
+        state.excludedFacets.add(id);
+        state.facetSystems.delete(id);
+      } else {
+        state.excludedFacets.delete(id);
+      }
+      closeCoveringPicker();
+      handleSelectionChanged();
+      if (state.assignSystemMode) {
+        const what = on ? 'not in this scope' : coveringLabel(facetCovering(id));
+        setStatus('loading', `${faceLabel(id)}: ${what}. Tap another facet, or "Assign covering" to finish.`);
+      }
+    }
+
+    function handleAssignSystemClick(event) {
+      if (!state.assignSystemMode) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (state.suppressNextClick || state.pointerTracker.moved || state.pointerTracker.isPinching) return;
+      const target = event.target;
+      if (target && target.closest && (target.closest('.penetration-popup') || target.closest('.diagram-nav') || target.closest('.diagram-add-app'))) return;
+      const sharedPoint = clientToSharedPoint(event.clientX, event.clientY);
+      const facet = facetAtSharedPoint(sharedPoint);
+      if (!facet) {
+        setAssignSystemMode(false);
+        hideStatus();
+        return;
+      }
+      openCoveringPicker(String(facet.facet_id || ''), viewportPoint(sharedPoint));
     }
 
     // ---- POWER ATTIC VENT operation control -------------------------------------------------
@@ -2759,6 +3310,227 @@
       if (popup) { popup.className = 'penetration-popup'; popup.innerHTML = ''; }
     }
 
+    // ---- B2r1: the size/label review block -----------------------------------------------------
+    // ONE builder for ALL FOUR surfaces that can show the question — the XML marker popup, the XML
+    // list card, the user-item popup and the user-item card — for the same reason the engine has one
+    // review authority: separate copies could disagree about whether an item is answered, and
+    // whichever one the user happened to be looking at would win. Same discipline as
+    // `buildOtherFields` and `buildPowerVentOperationControl`.
+    //
+    // B2 had the question in the XML POPUP only. Two findings came out of that single omission:
+    // B2-F01 (a user-placed item could block Continue and export with no way to answer from the
+    // interface) and B2-Q01 (the collapsed penetration panel lists the pending items as cards, but
+    // those cards carried no reason and no confirm control, so the shortlist showed the user that
+    // something needed attention without offering any way to attend to it).
+    //
+    // `opts.correctType` / `opts.correctCategory` decide whether this block draws its own correction
+    // controls. The XML surfaces pass false for both: those cards and popups ALREADY have the Type
+    // select that corrects a penetration, and adding a second one would ask the same question twice.
+    // The user surfaces pass true, because a user item has no other post-creation type control.
+    //
+    // What this never touches: a user item's `confirmed` flag. That is PLACEMENT — "this marker is
+    // where I meant to put it" — and the type question is a different question about the same item.
+    // Confirming placement must not answer it, and answering it must not move the marker.
+    function buildReviewQuestionBlock(itemId, opts) {
+      const id = String(itemId || '');
+      const review = id ? reviewForItemId(id) : null;
+      if (!review) return null;
+      const o = opts || {};
+      const item = o.userItem || null;
+      const wrap = document.createElement('div');
+      wrap.className = 'review-block';
+
+      // The sentence is the ENGINE's (appurtenance_review.reason_text), so the figures in it are the
+      // figures the estimator compared. The page does not recompute or reword them.
+      const reason = document.createElement('div');
+      reason.className = 'review-reason';
+      reason.setAttribute('data-review-reason', id);
+      reason.textContent = String(review.reason_text || '');
+      wrap.appendChild(reason);
+
+      // Name the item and its host explicitly. A popup title already says both, but in the collapsed
+      // shortlist this block may be the only thing the user sees about this item.
+      const who = document.createElement('div');
+      who.className = 'penetration-meta';
+      who.setAttribute('data-review-item', id);
+      who.textContent = item
+        ? `${id} · host ${faceLabel(item.hostFacetId)} · `
+          + `${typeDisplayLabel(item.type, item.otherLabel)}`
+          + (String(item.type || '').toUpperCase() === 'OTHER' && item.otherCategory
+              ? ` (${registryLabel(item.otherCategory)})` : '')
+        : `${id} · host ${faceLabel(review.host_id || '')}`;
+      wrap.appendChild(who);
+
+      if (reviewIsConfirmed(review)) {
+        const done = document.createElement('div');
+        done.className = 'review-confirmed';
+        done.setAttribute('data-review-confirmed', id);
+        done.textContent = '✓ Type confirmed as selected. Change the type to revisit this.';
+        wrap.appendChild(done);
+      } else {
+        const row = document.createElement('div');
+        row.className = 'review-confirm-row';
+        const confirm = document.createElement('button');
+        confirm.type = 'button';
+        confirm.setAttribute('data-review-confirm', id);
+        // Named for the question it answers. "Confirm placement" is a different button about a
+        // different thing, and the two texts are deliberately not interchangeable.
+        confirm.textContent = o.confirmLabel || 'Confirm selected type';
+        confirm.addEventListener('click', () => confirmReview(id));
+        row.appendChild(confirm);
+        wrap.appendChild(row);
+      }
+
+      // ---- the correction path: type, and for OTHER the registry category ----------------------
+      // Narrow by construction. The type options are `penetrationTypeOptions()` — the same list the
+      // creation form and the XML card offer — and the categories are `APPURTENANCE_CATEGORIES`,
+      // the same constant `buildOtherFields` uses. No second list of either exists, so nothing here
+      // can drift from what the rest of page 2 allows. This is NOT the deferred redesign of the
+      // user-defined description / source / justification fields: the label is left alone.
+      if (item && (o.correctType || o.correctCategory)) {
+        const fix = document.createElement('div');
+        fix.className = 'review-correct-row';
+        if (o.correctType) {
+          const typeField = document.createElement('label');
+          typeField.textContent = 'Correct the type';
+          const typeSelect = document.createElement('select');
+          typeSelect.setAttribute('data-review-correct-type', id);
+          for (const [value, label] of penetrationTypeOptions()) {
+            const opt = document.createElement('option');
+            opt.value = value; opt.textContent = label;
+            typeSelect.appendChild(opt);
+          }
+          typeSelect.value = String(item.type || '');
+          typeSelect.addEventListener('change', () => setUserAppType(id, typeSelect.value));
+          typeField.appendChild(typeSelect);
+          fix.appendChild(typeField);
+        }
+        if (o.correctCategory && String(item.type || '').toUpperCase() === 'OTHER') {
+          const catField = document.createElement('label');
+          catField.textContent = 'Correct the category';
+          const catSelect = document.createElement('select');
+          catSelect.setAttribute('data-review-correct-category', id);
+          const blank = document.createElement('option');
+          blank.value = ''; blank.textContent = 'Leave blank if unsure';
+          catSelect.appendChild(blank);
+          for (const cat of APPURTENANCE_CATEGORIES) {
+            const opt = document.createElement('option');
+            opt.value = cat; opt.textContent = registryLabel(cat);
+            catSelect.appendChild(opt);
+          }
+          catSelect.value = String(item.otherCategory || '');
+          catSelect.addEventListener('change', () => setUserAppOtherCategory(id, catSelect.value));
+          catField.appendChild(catSelect);
+          fix.appendChild(catField);
+        }
+        const err = document.createElement('div');
+        err.className = 'user-app-error';
+        err.setAttribute('data-review-correct-error', id);
+        fix.appendChild(err);
+        wrap.appendChild(fix);
+      }
+      return wrap;
+    }
+
+    // The user-item surfaces: their own correction controls, and the label that distinguishes this
+    // answer from "Confirm placement".
+    function buildUserAppReviewBlock(item) {
+      if (!item) return null;
+      return buildReviewQuestionBlock(item.designator, {
+        userItem: item, correctType: true, correctCategory: true,
+        confirmLabel: 'Confirm selected type/category',
+      });
+    }
+
+    // The XML-penetration surfaces: no correction controls of its own, because the Type select that
+    // corrects a penetration is already on both of them.
+    function buildXmlReviewBlock(penetrationId) {
+      return buildReviewQuestionBlock(penetrationId, {});
+    }
+
+    // Matched by comparing the attribute in JS rather than by interpolating the designator into a
+    // selector: that needs no escaping rule to be correct, so it cannot be broken later by an id
+    // this page does not generate today.
+    function reviewCorrectionError(designator, message) {
+      const want = String(designator);
+      for (const node of document.querySelectorAll('[data-review-correct-error]')) {
+        if (node.getAttribute('data-review-correct-error') === want) {
+          node.textContent = String(message || '');
+        }
+      }
+    }
+
+    // A correction REFUSES rather than half-applies. An item that stops satisfying
+    // isUserAppComplete() is dropped from userAppRowsForEngine(), so a correction that left it
+    // incomplete would make the review VANISH instead of being answered — the question would look
+    // resolved because the item had become invisible. So the new classification is validated against
+    // the same completeness rule the payload uses, and rejected with a message if it would not hold.
+    function setUserAppType(designator, type) {
+      const item = userAppById(designator);
+      if (!item) return false;
+      const next = String(type || '').toUpperCase();
+      const allowed = penetrationTypeOptions().map(([v]) => v).filter(Boolean);
+      if (!allowed.includes(next)) {
+        reviewCorrectionError(designator, 'Choose one of the listed types.');
+        return false;
+      }
+      if (next === String(item.type || '').toUpperCase()) return false;   // nothing to correct
+      const wantsDims = isDimensionedAppurtenanceType(next);
+      if (wantsDims && !(Number(item.width) > 0 && Number(item.height) > 0)) {
+        reviewCorrectionError(designator,
+          `${registryLabel(next) || next} is measured by size, and this item has no width and height. `
+          + 'Delete it and add it again with its measurements.');
+        return false;
+      }
+      if (next === 'OTHER' && !String(item.otherLabel || '').trim()) {
+        reviewCorrectionError(designator, 'Other needs a description. Use the item\'s own fields to name it.');
+        return false;
+      }
+      reviewCorrectionError(designator, '');
+      item.type = next;
+      item.shape = wantsDims ? 'dimensioned' : 'point';
+      if (!wantsDims) { item.width = null; item.height = null; }
+      // Leaving OTHER: the label and category describe an OTHER item and are not facts about a
+      // pipe jack, so they stop riding in the payload. They are KEPT on the item rather than
+      // deleted, so correcting back to OTHER does not lose what the user wrote.
+      if (next !== 'OTHER') item.otherCategory = item.otherCategory || '';
+      // The old decision keyed the OLD classification. It is not cleared by hand: the key carries
+      // the type and category, so it simply no longer matches what the engine now computes, and
+      // applyAppurtenanceReview() drops it when the recompute comes back. The engine decides.
+      handleSelectionChanged();
+      renderPenetrationList();
+      renderUserAppPopup();
+      updateUserAppMarkerColors();
+      updateComputeUi();
+      setStatus('success', `${designator}: type corrected to ${typeDisplayLabel(next, item.otherLabel)}. `
+                           + 'Quantities are being recalculated under the corrected type.');
+      return true;
+    }
+
+    function setUserAppOtherCategory(designator, category) {
+      const item = userAppById(designator);
+      if (!item) return false;
+      if (String(item.type || '').toUpperCase() !== 'OTHER') {
+        reviewCorrectionError(designator, 'A category applies to an Other item.');
+        return false;
+      }
+      const next = String(category || '').trim().toUpperCase();
+      if (next && !APPURTENANCE_CATEGORIES.includes(next)) {
+        reviewCorrectionError(designator, 'Choose one of the listed categories.');
+        return false;
+      }
+      reviewCorrectionError(designator, '');
+      item.otherCategory = next;        // '' is legitimate: "unsure" -> listed for review, not dropped
+      handleSelectionChanged();
+      renderPenetrationList();
+      renderUserAppPopup();
+      updateUserAppMarkerColors();
+      updateComputeUi();
+      setStatus('success', `${designator}: category corrected to `
+                           + `${next ? registryLabel(next) : 'none (listed for review)'}.`);
+      return true;
+    }
+
     function renderUserAppPopup() {
       const id = state.activeUserAppPopupId;
       const item = userAppById(id);
@@ -2770,6 +3542,10 @@
       const close = document.createElement('button'); close.type = 'button'; close.className = 'penetration-popup-close'; close.textContent = '×'; close.addEventListener('click', closeUserAppPopup); popup.appendChild(close);
       const title = document.createElement('div'); title.className = 'penetration-popup-title'; title.textContent = `${item.designator} · ${typeDisplayLabel(item.type, item.otherLabel)} on ${faceLabel(item.hostFacetId)}`; popup.appendChild(title);
       const meta = document.createElement('div'); meta.className = 'user-app-meta'; meta.textContent = userAppStatusText(item); popup.appendChild(meta);
+      // B2r1 / B2-F01: the size/label question, on the item it is about, above the controls that
+      // answer it. Closing this popup confirms nothing — only the button inside this block does.
+      const _urev = buildUserAppReviewBlock(item);
+      if (_urev) popup.appendChild(_urev);
       appendRepairEventToggle(popup, item.repairEvent, (value) => setUserAppRepairEvent(item.designator, value));
       // Same rules for user-defined appurtenances — a turret skylight is user-defined, because
       // EagleView does not reliably detect skylights.
@@ -2862,11 +3638,23 @@
 
     function xmlPenetrationNeedsAttention(penetration) {
       const id = String(penetration && penetration.penetration_id || '');
+      // FRAME v106.6g2 / B2 — an unresolved size/label review needs attention too, and routing it
+      // through THIS predicate is deliberate: it is what already drives the "N need attention"
+      // count, the collapsed shortlist and the card render. So the item stays identifiable with the
+      // panel collapsed, several items can need attention at once, and no new surface was invented
+      // for a question the page already knows how to raise.
+      if (reviewIsPending(reviewForItemId(id))) return true;
       return Boolean(state.penetrationZoneStatus[id]) && isXmlPenetrationUndefined(id);
     }
 
     function userAppNeedsAttention(item) {
-      return !isUserAppComplete(item);
+      if (!isUserAppComplete(item)) return true;
+      // B2r1 / B2-F01: a pending size/label review makes a user-placed item need attention in
+      // exactly the way it already does for an XML penetration (xmlPenetrationNeedsAttention).
+      // renderPenetrationList() uses this ONE predicate for both the visible "n need attention"
+      // count and the collapsed shortlist, so answering it here puts the item in both at once —
+      // which is what makes the item reachable without expanding the panel.
+      return reviewIsPending(reviewForItemId(item && item.designator));
     }
 
     function renderXmlPenetrationCard(container, penetration) {
@@ -2889,6 +3677,12 @@
       head.appendChild(text);
       head.appendChild(pill);
       row.appendChild(head);
+
+      // B2r1 / B2-Q01: the same question the marker popup asks, from the same builder. Without it
+      // the collapsed panel listed this item as needing attention and offered nothing to answer it
+      // with. It sits above the Type select, which is this card's correction control.
+      const _crev = buildXmlReviewBlock(id);
+      if (_crev) row.appendChild(_crev);
 
       const controls = document.createElement('div');
       controls.className = 'penetration-controls';
@@ -2971,6 +3765,11 @@
         head.appendChild(text);
         head.appendChild(pill);
         row.appendChild(head);
+        // B2r1 / B2-F01: the same review block the map popup shows, from the same builder. This is
+        // what makes the item answerable from the list — including the COLLAPSED shortlist, which is
+        // the only place it appears until the panel is expanded.
+        const _urev = buildUserAppReviewBlock(item);
+        if (_urev) row.appendChild(_urev);
         appendRepairEventToggle(row, item.repairEvent, (value) => setUserAppRepairEvent(item.designator, value));
         if (item.repairEvent === true) {
           const size = buildChimneySizeControl(item.designator);
@@ -3457,6 +4256,11 @@
 
     async function handleContinue() {
       if (!state.roofData || state.busy) return;
+      if (coveringChoiceRequired()) {     // FRAME v105.5: two or more coverings installed and none declared
+        renderCoveringUi();
+        setStatus('error', 'Choose which covering is most of this roof before continuing.');
+        return;
+      }
       setBusy(true);
       setStatus('loading', 'Checking penetrations before continuing…');
       try {
@@ -3491,6 +4295,27 @@
         }
         if (blockers.length) {
           setStatus('error', `${blockers.length} penetrations sit inside a repair area and must be defined before continuing: ${blockers.join(', ')}.`);
+          return;
+        }
+        // FRAME v106.6g2 / B2 — THE REVIEW GATE, rechecked HERE and not trusted to the button's
+        // disabled state. The same discipline the three blockers above already follow: a disabled
+        // button is feedback, the handler is the enforcement, and a payload that reached this
+        // function by any other route still stops. It names the exact items so the user knows which
+        // marker to open rather than hunting.
+        if (reviewCheckFailed()) {
+          setStatus('error', 'The size/label review could not be completed, so this selection cannot '
+            + 'be carried forward. Press Compute to run it again.'
+            + ((state.appurtenanceReview && state.appurtenanceReview.error)
+                ? ` (${state.appurtenanceReview.error})` : ''));
+          return;
+        }
+        const _pending = pendingReviews();
+        if (_pending.length) {
+          state.penetrationPanelExpanded = true;
+          renderPenetrationList();
+          setStatus('error', `${_pending.length} item(s) need a type decision before continuing: `
+            + _pending.map((i) => i.label || i.item_id).join(', ')
+            + '. Open each marker and either change the type or confirm the one selected.');
           return;
         }
         // THE HIGH-SLOPE DECISION IS REQUIRED. An unclaimed height charge is an INVISIBLE
@@ -4084,6 +4909,10 @@
       rows.querySelectorAll('input[data-high]').forEach((el) => {
         el.addEventListener('change', () => {
           const id = String(el.dataset.high);
+          if (el.checked && refuseIfExcluded(id, 'a high-slope flag')) {   // v106.2
+            el.checked = false;
+            return;
+          }
           if (el.checked) { state.highSlopeFacets.add(id); state.noHighSlope = false; }
           else state.highSlopeFacets.delete(id);
           renderSlopePanel();
@@ -4121,6 +4950,7 @@
 
     function setReplacement(faceId, on) {
       const fid = String(faceId);
+      if (on && refuseIfExcluded(fid, 'a full replacement')) { renderReplacementPanel(); return; }   // v106.2
       if (on) {
         state.replacedFacets.add(fid);
         clearRepairsOnFacet(fid);          // mutual exclusion — the repair selection is cleared
@@ -4273,8 +5103,16 @@
         eave_iws: eaveIwsRowForEngine(),
         soffit_depth_in: (state.shakeMeasurements && state.shakeMeasurements.soffit_depth_in != null)
                           ? state.shakeMeasurements.soffit_depth_in : null,
+        // FRAME v106.6g2 / B2 — the user's explicit confirmations, as KEYS ONLY. The page sends no
+        // verdict: the engine recomputes which items are suspicious and matches these keys against
+        // the facts it just measured. A key that no longer matches authorises nothing, so a stale or
+        // tampered payload leaves its item unresolved rather than silently accepted.
+        appurtenance_reviews: reviewRowsForEngine(),
         xml_text: state.xmlText,
-        shake_measurements: state.shakeMeasurements
+        shake_measurements: state.shakeMeasurements,
+        // FRAME v105.5: which covering is on which facet — the registry's two keys, each
+        // present ONLY when the user declared it (roofSystemKeysForEngine). Nothing declared -> nothing here.
+        ...roofSystemKeysForEngine()
       };
     }
 
@@ -4420,6 +5258,8 @@
       return state.selectedValleys.size > 0 || state.transitionRepairs.size > 0
         || state.ridgeVents.size > 0 || state.highSlopeFacets.size > 0 || state.noHighSlope
         || state.replacedFacets.size > 0
+        || state.facetSystems.size > 0
+        || state.excludedFacets.size > 0                                      // v106.2
         || (state.userAppurtenances || []).length > 0
         || Object.values(state.penetrationDefinitions || {}).some((d) => d && d.repairEvent === true);
     }
@@ -4429,6 +5269,7 @@
       selectAllButton.disabled = isBusy || !state.roofData;
       replaceRoofButton.disabled = isBusy || !state.roofData;
       clearButton.disabled = isBusy || !state.roofData || !hasAnySelection();
+      if (assignCoveringButton) assignCoveringButton.disabled = isBusy || !state.roofData || coveringChoiceRequired();   // FRAME v105.5
       updateComputeUi();
     }
 
@@ -4527,7 +5368,94 @@
     async function computeWorkbenchResult(uiSelection) {
       // workbenchUpdate returns both the scope (with user items) and the diagram
       // (which now includes user-appurtenance events), so a single call covers all cases.
-      return await workbenchUpdate(state.xmlText, uiSelection);
+      const result = await workbenchUpdate(state.xmlText, uiSelection);
+      // FRAME v106.6g2 / B2 — and now the review, on the same round trip. Stored, never recomputed
+      // here. A missing or malformed `reviews` is treated as NOT OK rather than as "nothing
+      // pending": fail closed, because the one thing this must never do is let a claim through
+      // because the answer did not arrive.
+      applyAppurtenanceReview(result && result.reviews);
+      return result;
+    }
+
+    // ---- B2: appurtenance size/label review -------------------------------------------------
+    function applyAppurtenanceReview(reviews) {
+      if (!reviews || typeof reviews !== 'object' || !Array.isArray(reviews.items)) {
+        state.appurtenanceReview = { ok: false, items: [], unresolved: [], unresolved_ids: [],
+                                     error: 'no review returned by the engine' };
+      } else {
+        state.appurtenanceReview = reviews;
+        // Drop confirmations that match no current item. Not an invalidation rule — the keys do
+        // that — just housekeeping, so the payload cannot accumulate keys from earlier edits.
+        const live = new Set(reviews.items.map((i) => String(i.decision_key)));
+        for (const key of Array.from(state.reviewConfirmations.keys())) {
+          if (!live.has(String(key))) state.reviewConfirmations.delete(key);
+        }
+      }
+      renderPenetrationList();
+      updatePenetrationMarkerColors();
+      renderPenetrationPopup();
+      // B2r1 / B2-F01: the USER surfaces are refreshed from the same answer. Before this, a review
+      // that named a user-placed item changed nothing the user could see: its marker kept its old
+      // colour and its popup kept its old contents until something else happened to re-render them.
+      updateUserAppMarkerColors();
+      renderUserAppPopup();
+      updateComputeUi();
+    }
+
+    function reviewForItemId(itemId) {
+      const items = (state.appurtenanceReview && state.appurtenanceReview.items) || [];
+      return items.find((i) => String(i.item_id) === String(itemId)) || null;
+    }
+
+    function reviewIsConfirmed(review) {
+      return Boolean(review && state.reviewConfirmations.get(String(review.decision_key)));
+    }
+
+    // Pending = the engine says this item is suspicious AND in the selected work AND the user has
+    // not confirmed THESE facts. Asking the engine's own `blocking` flag is what keeps an
+    // out-of-scope marker from gating the whole roof.
+    function reviewIsPending(review) {
+      return Boolean(review && review.blocking && !reviewIsConfirmed(review));
+    }
+
+    function pendingReviews() {
+      const items = (state.appurtenanceReview && state.appurtenanceReview.items) || [];
+      return items.filter(reviewIsPending);
+    }
+
+    function reviewCheckFailed() {
+      return !(state.appurtenanceReview && state.appurtenanceReview.ok === true);
+    }
+
+    function confirmReview(itemId) {
+      const review = reviewForItemId(itemId);
+      if (!review || !review.decision_key) return false;
+      // The decision is recorded against the FACTS, not against the item's name. A press of this
+      // button is the only thing that records one — closing the popup records nothing.
+      state.reviewConfirmations.set(String(review.decision_key), true);
+      // handleSelectionChanged() is page 2's own hook: it recomputes the selection key, marks the
+      // totals STALE in manual mode and recomputes in live mode. A confirmation changes the payload,
+      // so it is a selection change like any other and must go through the same hook -- which is
+      // also what satisfies "in manual mode, mark calculations stale and enforce recompute".
+      handleSelectionChanged();
+      renderPenetrationList();
+      updatePenetrationMarkerColors();
+      renderPenetrationPopup();
+      // B2r1 / B2-F01: and the user surfaces, so confirming a user-placed item clears ITS ring and
+      // ITS card rather than only the XML ones.
+      updateUserAppMarkerColors();
+      renderUserAppPopup();
+      updateComputeUi();
+      setStatus('success', `${review.item_id}: type confirmed as selected. Quantities are unchanged.`);
+      return true;
+    }
+
+    function reviewRowsForEngine() {
+      const rows = [];
+      for (const key of state.reviewConfirmations.keys()) {
+        rows.push({ key: String(key), decision: 'CONFIRMED' });
+      }
+      return rows;
     }
 
     // Path A membership is the ENGINE's call, never the UI's: it depends on the >=95% sweep, which
@@ -4552,6 +5480,10 @@
 
     async function computeCurrentSelection(options = {}) {
       if (!state.roofData || state.busy) return;
+      if (coveringChoiceRequired()) {     // FRAME v105.5: never compute on a covering nobody chose
+        renderCoveringUi();
+        return;
+      }
       setBusy(true);
       setTotalsComputing(true);
       applyCheapSelectionUi();
@@ -4647,13 +5579,23 @@
       } else {
         const valley = valleyById(valleyId);
         const bordering = Array.isArray(valley && valley.bordering_facet_ids) ? valley.bordering_facet_ids : [];
-        state.selectedValleys.set(key, new Set(bordering));
+        // FRAME v106.2 — an EXCLUDED facet's side is left out, as in "Select all valleys": the scoped side
+        // still needs its valley work (each side applies its own, entry 104), and including the excluded
+        // side would emit a selection the engine refuses. If BOTH sides are excluded there is nothing to
+        // select, so the valley is not selected at all rather than stored empty.
+        // the dropped sides are visible in the bar's persistent note and the facet's own shading
+        const kept = bordering.filter((f) => !isFacetExcluded(f));
+        if (kept.length) state.selectedValleys.set(key, new Set(kept));
       }
       handleSelectionChanged();
     }
 
     function toggleValleyFace(valleyId, faceId) {
       if (state.busy) return;
+      // selectedFaceSet returns a SET, not an array — .has, never .includes (QA wrote .includes first, which
+      // would have thrown a TypeError on every per-facet valley tap).
+      if (!selectedFaceSet(String(valleyId)).has(String(faceId))
+          && refuseIfExcluded(faceId, 'a valley repair')) return;        // v106.2
       const key = String(valleyId);
       const current = new Set(selectedFaceSet(key));
       if (current.has(faceId)) current.delete(faceId);
@@ -4696,7 +5638,22 @@
           highSlopeFacets: Array.from(state.highSlopeFacets),                 // 2-story facets
           noHighSlope: state.noHighSlope,                                     // the explicit dismissal
           replacedFacets: Array.from(state.replacedFacets),                   // v61 full slope replacement
+          // FRAME v105.5: the declared covering. A pre-v105.5 snapshot has neither key, which reads as
+          // "nothing declared" — backward compatible by construction, not by a migration.
+          predominantSystem: state.predominantSystem,
+          facetSystems: Array.from(state.facetSystems.entries()),             // exceptions only
+          excludedFacets: Array.from(state.excludedFacets),                   // v106.2: not scoped here
           userAppurtenances: state.userAppurtenances,             // raw items (anchor + confirmed intact)
+          // B2r1 / B2-F02: the explicit size/label answers, as KEYS ONLY.
+          //
+          // A key is a fingerprint of the facts the user agreed to, so it is the only part of a
+          // review that is safe to persist: it cannot assert that anything is resolved on its own —
+          // it only matches, or fails to match, what the engine computes on return. Deliberately NOT
+          // stored: `ok`, `blocked`, the pending lists, the reason text, or the boolean this Map
+          // holds as its value. Any of those would let a restored page claim "nothing pending"
+          // without the engine having said so, which is the whole failure this review exists to
+          // prevent. A pre-B2r1 snapshot simply has no key here, which reads as "nothing confirmed".
+          reviewConfirmations: Array.from(state.reviewConfirmations.keys()).map(String),
           savedAt: new Date().toISOString()
         };
         sessionStorage.setItem(RESTORE_KEY, JSON.stringify(snapshot));
@@ -4743,7 +5700,36 @@
       state.highSlopeFacets = new Set((snapshot.highSlopeFacets || []).map(String));
       state.noHighSlope = Boolean(snapshot.noHighSlope);
       state.replacedFacets = new Set((snapshot.replacedFacets || []).map(String));
+      // FRAME v105.5: READ what was declared — an old snapshot has neither key, so nothing is declared.
+      state.predominantSystem = snapshot.predominantSystem ? String(snapshot.predominantSystem) : null;
+      state.facetSystems = new Map((snapshot.facetSystems || [])
+        .map(([k, v]) => [String(k), String(v || '')])
+        .filter(([, v]) => v));
+      // FRAME v106.2: a pre-v106.2 snapshot has no key, which reads as "nothing excluded". Any facet that
+      // somehow appears in BOTH is dropped from the exclusions, because the engine refuses the overlap and a
+      // restored snapshot must never be a selection the engine will reject.
+      state.excludedFacets = new Set((snapshot.excludedFacets || [])
+        .map(String)
+        .filter((id) => !state.facetSystems.has(id)));
       state.userAppurtenances = Array.isArray(snapshot.userAppurtenances) ? snapshot.userAppurtenances : [];
+      // B2r1 / B2-F02: rehydrate the explicit size/label answers, then let the ENGINE revalidate them.
+      //
+      // Two steps, and the order matters. Here, only the FORMAT is checked — a 32-hex key, the same
+      // shape `appurtenance_review.confirmed_keys()` accepts — so a truncated, tampered or
+      // non-string entry contributes nothing and its item stays unresolved. Nothing here decides
+      // that anything is answered.
+      //
+      // The decision is made by the recompute at the bottom of this function. These keys ride out in
+      // buildUiSelection()'s `appurtenance_reviews`, and the engine recomputes every key from the
+      // CURRENT facts and honours only the ones that match. So a changed type, category, size,
+      // group, member, host or roof yields a different key, matches nothing, and the question is
+      // asked again — without this page having to work out which of those changed. A key from before
+      // B2r1 carries no membership and so cannot match either. `applyAppurtenanceReview()` then
+      // drops the unmatched keys from this Map when that answer comes back.
+      state.reviewConfirmations = new Map(
+        (Array.isArray(snapshot.reviewConfirmations) ? snapshot.reviewConfirmations : [])
+          .filter((k) => typeof k === 'string' && /^[0-9a-f]{32}$/i.test(k))
+          .map((k) => [String(k).toLowerCase(), true]));
       pruneEmptySelections();
 
       // Reflect restored inputs in the UI, then recompute through the SAME path the app uses,
@@ -4766,6 +5752,7 @@
       setStatus('loading', 'Loading the engine in your browser…');
       try {
         await ready();
+        await loadRegisteredSystems();      // FRAME v105.5: the installed coverings — from the engine, never a literal
         state.xmlText = await getXmlText();
         state.roofData = await roofLayout(state.xmlText);
 
@@ -4795,24 +5782,38 @@
     selectAllButton.addEventListener('click', function () {
       if (!state.roofData || state.busy) return;
       state.selectedValleys = new Map();
+      // FRAME v106.2 — AN EXCLUDED FACET'S SIDE IS SKIPPED, NOT REFUSED. A valley between an excluded facet
+      // and a scoped one still needs the SCOPED side's work: each side applies its own (Joseph, entry 104).
+      // Refusing the whole bulk action over one correctly-declared facet would punish the declaration, and
+      // including the excluded side would emit a selection the engine refuses. So the valley is selected
+      // with that facet left out, and the BAR says which, persistently (coveringExcludedNote) — a status
+      // message would be overwritten by the compute that follows, and a skip the user cannot see is an
+      // under-scope. (v106.3: this comment said "the status SAYS which" after that moved to the bar.)
       for (const valley of state.roofData.valleys || []) {
         const bordering = Array.isArray(valley.bordering_facet_ids) ? valley.bordering_facet_ids : [];
-        if (bordering.length) state.selectedValleys.set(String(valley.valley_id), new Set(bordering));
+        const kept = bordering.filter((f) => !isFacetExcluded(f));
+        if (kept.length) state.selectedValleys.set(String(valley.valley_id), new Set(kept));
       }
-      handleSelectionChanged();
+      handleSelectionChanged();   // the excluded facets are named persistently in the bar, not here
     });
 
     replaceRoofButton.addEventListener('click', function () {
       if (!state.roofData || state.busy) return;
       // Mark EVERY roof facet for full replacement (full-roof case). Each marked facet clears its own
       // repair picks via setReplacement's mutual-exclusion, so no facet is left as both.
+      // FRAME v106.2 — SKIP an excluded facet, and say which. This writes state.replacedFacets DIRECTLY and
+      // so bypasses setReplacement's refusal; without this, "replace entire roof" would mark an excluded
+      // facet and emit a selection the engine refuses. Skipped rather than refused, for the same reason as
+      // "Select all valleys": the rest of the roof is a legitimate full replacement.
       for (const f of (state.roofData.facets || [])) {
         const fid = String(f.facet_id);
+        if (isFacetExcluded(fid)) continue;              // named persistently in the bar, not counted here
         state.replacedFacets.add(fid);
         clearRepairsOnFacet(fid);
       }
       if (!state.replacementPanelOpen) state.replacementPanelOpen = true;
       handleSelectionChanged();
+      // the skipped facets are named persistently in the bar (coveringExcludedNote), not in the status box
       renderReplacementPanel();
     });
 
@@ -4835,6 +5836,12 @@
       state.penetrationDefinitions = {};
       state.userAppurtenances = [];
       state.replacedFacets.clear();
+      // FRAME v105.5: the covering declaration is work too — back to first-loaded (the one installed covering
+      // is still the default; with two or more, the choice is asked again).
+      state.facetSystems.clear();
+      state.excludedFacets.clear();                                            // v106.2
+      state.predominantSystem = null;
+      setAssignSystemMode(false);
       handleSelectionChanged();
       renderReplacementPanel();
     });
@@ -5099,6 +6106,18 @@
     }
 
     svg.addEventListener('click', handleTapToPlaceClick, true);
+    svg.addEventListener('click', handleAssignSystemClick, true);       // FRAME v105.5: owns the tap in its mode
+    if (assignCoveringButton) {
+      assignCoveringButton.addEventListener('click', function (event) {
+        event.stopPropagation();
+        toggleAssignSystemMode();
+      });
+    }
+    if (predominantCoveringSelect) {
+      predominantCoveringSelect.addEventListener('change', function () {
+        setPredominantSystem(this.value || null);
+      });
+    }
 
     window.addEventListener('resize', function () {
       if (state.roofData) drawRoof();

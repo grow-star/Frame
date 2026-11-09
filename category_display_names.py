@@ -69,6 +69,11 @@ class _DisplayNames(Mapping):
     import (the v98 trap). Read-only."""
     def _all(self):
         out = dict(_package_labels())
+        # FRAME v106.6: the SHARED tier's labels, and ONLY for ids a registered package declared it uses —
+        # read at call time, lazily, exactly as the ids themselves enter the registry. A label for an id
+        # that is not in the registry is page drift, which is what the drift gate exists to catch.
+        from shared_category_registry import shared_labels_in_use
+        out.update(shared_labels_in_use())
         out.update(_CORE_LABELS)
         return out
 

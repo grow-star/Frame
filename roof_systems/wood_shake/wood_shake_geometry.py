@@ -176,9 +176,25 @@ def _course_top_ft(profile, courses=None):
     return ((n - 1) * float(prof["exposure_in"]) + float(prof["length_in"])) / 12.0
 
 
+# FRAME v106.6c: THE 21 IN IS WOOD SHAKE'S, AND IT LIVES HERE NOW.
+# It is the distance the interlocking courses must be lifted to reach an appurtenance's flashing, which is a
+# fact about shakes and about nothing else. Until v106.6c it was `geometry_core.APPURT_CLEAR_IN = 21.0`, in
+# core, applied to every roof system alike — so a membrane could not decline a coursed assumption, and the
+# purity gate could not see it because a bare 21.0 contains no material word. Moving it here changes no
+# number: core looked it up at 21 in and wood shake declares 21 in.
+APPURTENANCE_CLEARANCE_IN = 21.0
+# FRAME v106.6g: the BASE-FLASHED allowance - a vent or pipe jack, not a curb. Joseph, 2026-11-06: "For a
+# typical box vent or pipe jack, you would need roughly a 21in x 21in square that gives enough room to place
+# the 12in x 12in vent and place a strip of IWS around the flashing." That is the item's own base plus about
+# six inches on each side, NOT the 18in strip a chimney or skylight needs round its perimeter. The 21in above
+# stays exactly what it was and goes on serving every curb-flashed item.
+APPURTENANCE_BASE_CLEARANCE_IN = 6.0
+
 register(SYSTEM_ID,
          resolve_profile=resolve_shake_measurements,
          disturbance={"VALLEY": valley_disturbance},
          expand_scope=_expand_scope,
          claims_unlabelled_profiles=True,
-         course_top_ft=_course_top_ft)
+         course_top_ft=_course_top_ft,
+         appurtenance_clearance_in=APPURTENANCE_CLEARANCE_IN,
+         appurtenance_base_clearance_in=APPURTENANCE_BASE_CLEARANCE_IN)

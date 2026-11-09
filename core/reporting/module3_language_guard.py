@@ -84,9 +84,28 @@ def export_gate(surfaces):
     g["allow_export"] = not g["blocked"]
     return g
 
-def safe_export(project, render_fn):
+def safe_export(project, render_fn, review=None):
     """App-layer export: collect editable surfaces, run the gate, and render ONLY if not hard-blocked.
-       Proves the survive-property — a hard term yields NO artifact. Soft terms render WITH a review flag."""
+       Proves the survive-property — a hard term yields NO artifact. Soft terms render WITH a review flag.
+
+       FRAME v106.6g2 / B2 — THE SECOND REFUSAL, by the same mechanism. `review` is the recomputed
+       appurtenance_review report. When it is blocked, render_fn is NEVER CALLED and no artifact
+       exists to export, print or download — exactly as a hard language term already behaves. It is
+       deliberately enforced HERE as well as at the top of the bridge's report template, because this
+       is the one boundary every report path traverses ("we call it, never bypass or duplicate it"),
+       so a reordered template or a new caller cannot route around it. Page 4's button state is
+       feedback, never the protection.
+
+       `review=None` means no review was supplied: existing callers and the language-guard's own
+       regressions are unaffected, and the bridge always supplies one. A caller that forgets is
+       covered by the template gate; a template that forgets is covered here."""
+    if review is not None and (not review.get("ok", False) or review.get("blocked", False)):
+        return {"exported": False, "artifact": None,
+                "gate": {"allow_export": False, "hard": [], "soft": []},
+                "review_blocked": True,
+                "review_unresolved_ids": list(review.get("unresolved_ids") or []),
+                "review_reasons": [i.get("reason_text") for i in (review.get("unresolved") or [])],
+                "review_error": review.get("error") or ""}
     gate = export_gate(collect_editable_surfaces(project))
     if not gate["allow_export"]:
         return {"exported": False, "artifact": None, "gate": gate}

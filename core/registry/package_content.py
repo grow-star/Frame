@@ -126,24 +126,43 @@ def repair_entries():
 
 # ---- CLAIM-LEVEL: exactly one package (BRIDGE 4) --------------------------------------------------------------
 def claim_text(key):
-    """The ONE registered roof-system package's text for `key`. RAISES on zero packages, on two or more (core will
-    not pick a system's words for a claim), and when that package declared no such text. BRIDGE 4: retires with
-    ScopeLine.material_profile_id, when a line states its own system."""
+    """The claim-level text for `key`, from the package that DECLARED one.
+
+    FRAME v106.4 — BRIDGE 4 RETIRED HERE. This used to ask "is exactly ONE PACKAGE registered?" when the question
+    it needs answered is "is there exactly ONE ANSWER?". Those two came apart the moment a second package
+    registered: the message this function raised called itself "the hard gate on a second roofing package", and it
+    was exactly that — all three keys raised on every claim, taking out §3's title, the method explanation and the
+    felt-interlayment callout together.
+
+    A package with no honest text for a key DECLARES NONE, and a package that declares none is not counted. That is
+    the same decline as a non-coursed covering omitting course_top_ft (v105.4), by the mechanism already here:
+    `texts` is optional per key. MODBIT registers none of these three — §3 is a REPAIR argument and a membrane facet
+    is scoped as a full replacement (patches out of scope, Joseph 2026-11-01), while a felt interlayment is a
+    coursed-covering concept a membrane does not have. So on a shake+MODBIT roof every key still has exactly one
+    answer and every rendered word is unchanged.
+
+    Exactly one declared -> that text, whatever else is registered. ZERO declared RAISES: core cannot invent the
+    words. MORE THAN ONE declared RAISES, naming them: two systems both claiming a claim-level section is a real
+    ambiguity and core will not pick between them — not reachable while only one registered package declares any
+    text, and a raise rather than a silent choice when it becomes reachable.
+    """
     if key not in TEXT_KEYS:
         raise KeyError(f"unknown claim text key {key!r}; known: {sorted(TEXT_KEYS)}")
-    pk = registered_packages()
-    if len(pk) != 1:
+    _content_packages()          # zero registered content is missing WIRING — one message, raised there
+    have = [(sid, _CONTENT[sid].texts[key]) for sid in sorted(_CONTENT) if key in _CONTENT[sid].texts]
+    if len(have) == 1:
+        return have[0][1]
+    if not have:
         raise RegistryWiringError(
-            f"FRAME bridge 4: {len(pk)} roof-system packages are registered ({list(pk)}), so the claim-level text "
-            f"{key!r} has {'no' if not pk else 'more than one'} answer and core will not pick one. This is the hard "
-            f"gate on a second roofing package, not a data problem. Fix: take the text from the line's own system "
-            f"(ScopeLine.material_profile_id — bridge 4's retirement).")
-    c = _CONTENT.get(pk[0])
-    if c is None or key not in c.texts:
-        raise RegistryWiringError(
-            f"FRAME wiring: package {pk[0]!r} declared no {key!r} text. Fix: pass texts={{{key!r}: ...}} to "
-            f"register_package_content in its content module.")
-    return c.texts[key]
+            f"FRAME wiring: no registered roof-system package declares a {key!r} text (registered: "
+            f"{list(registered_packages())}). Core cannot supply a system's own words. Fix: pass "
+            f"texts={{{key!r}: ...}} to register_package_content in the package that owns this section, or have "
+            f"the caller OMIT the section when no package claims it.")
+    raise RegistryWiringError(
+        f"FRAME: {len(have)} roof-system packages declare a {key!r} text ({[s for s, _ in have]}), so the "
+        f"claim-level text has more than one answer and core will not pick one. Fix: take the text from the "
+        f"line's own system (ScopeLine.material_profile_id), or have one package stop claiming this section. "
+        f"(v106.4)")
 
 
 def registered_content():

@@ -32,10 +32,15 @@ import math
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
-from shared_category_registry import REGISTRY_28   # authority for a user-supplied OTHER category
+from shared_category_registry import user_category_or_unmapped as _user_category_or_unmapped
+# FRAME v106.6g2: shared vocabulary, not a package number — whether a measurement contradicts a declared
+# type is a fact about the TYPE, so it is asked of the type table and answered the same way on every surface.
+from appurtenance_types import size_suggests_mislabel as _size_suggests_mislabel
+from appurtenance_types import mislabel_citation as _mislabel_citation
 from wood_shake_geometry import three_course_extent_ft    # v90: the ONE transition tie-in extent authority (FRAME v95: package)
 from wood_shake_geometry import SYSTEM_ID as _SYSTEM_ID   # FRAME v104c: the engine stamps its own material on every line
 from scope_contract import (EXPOSURE_IN, SHAKE_WIDTH_IN,   # FRAME v100: the core contract (package imports core)
+                            CAP_THRESHOLD,                 # FRAME v106.5: THE ONE continuous-metal rule (was a copy here)
                             METAL_EXPOSED, METAL_CONCEALED, METAL_NONE, METAL_MEMBRANE, METAL_UNKNOWN,
                             TRANSITION_METAL_VALUES, Edge, Appurt, Transition, M1Interface, ScopeLine)
 
@@ -52,7 +57,6 @@ SHAKES_PER_SQ    = 14400.0 / (SHAKE_WIDTH_IN * EXPOSURE_IN)
 # is dynamic in the MEASURED per-job exposure. The source's "twice the weather exposure" is a
 # PLACEMENT rule (where the strip's bottom edge sits), NOT the quantity multiplier — do not use it so.
 CSSB_INTERLAYMENT_STRIP_IN = 18.0
-CAP_THRESHOLD    = 0.95     # §6 continuous-metal round-to-full-run rule
 VALLEY_IWS_BAND_FT = 3.0    # VALLEY underlayment band = LF * 3 ft. VALLEY ONLY (v90 split): this name used
                             # to serve the transition too. The transition band is now DERIVED —
                             # geometry_core.three_course_extent_ft() — and must never read this constant.
@@ -301,19 +305,47 @@ def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
             out.append(ScopeLine("Appurtenance IWS", "APPURT_IWS", round(a.affected_SF, 2),
                                  "SF", "AUTO", "IWS standard around appurtenance"))
         ty = a.type.upper()
+        # FRAME v106.6g2 — THE SIZE DOES NOT MATCH THE LABEL, SO THE LINE ASKS. Joseph, 2026-11-07: "I can't
+        # have the program just accept a label from a user when it is obviously not even close (e.g. labeling
+        # a chimney a pipe jack and only giving it a pipe jack disturbance. That's not being truthful to the
+        # XML) ... Pershing should give a prompt or warning to confirm the label since the size suggests
+        # otherwise."
+        #   Sizing the zone from the measurement makes the EXTENT truthful and CANNOT make the BORDER
+        # truthful: the border comes from the flashing method and the method comes from the label. Yager's
+        # F70 is 24in x 46.3in - a chimney - and as a pipe jack it carves 14.64 SF against a chimney's
+        # 25.8016, because a vent gets a 6in flange border where a curb gets 21in for its IWS strip. A 43%
+        # under-scope with the extent already correct. Only a human can correct a label, so the only correct
+        # thing this engine can do is decline to bill it silently.
+        #   It rides the gate that already exists: CONFIRM is the tier a power vent and a user-defined
+        # appurtenance already use, gate is part of the aggregation key so the line separates on the report
+        # instead of merging into the AUTO ones, and the citation carries both figures so the user sees why.
+        _mis = _size_suggests_mislabel(a.type, a.other_category, a.width_ft, a.height_ft)
+        # ONE LINE PER APPURTENANCE, BUILT HERE AND FLAGGED BY NAME. The branches assign `_line` rather than
+        # appending, so the flag below reaches THE APPURTENANCE'S OWN LINE. v106.6g2 first wrote this as a
+        # patch of out[-1] — forced, because the retired expand_scope source fingerprint would not permit
+        # the branches to be modified at all (Build A, v106.6gA, retired it; Joseph: "no build should be
+        # forced to preserve an obsolete function structure merely to satisfy an old source fingerprint").
+        # out[-1] was wrong on its own terms: it is positional, and it needed an `!= "APPURT_IWS"` guard
+        # to avoid patching the IWS line. The first FLAGGABLE branch to append a SECOND line moves the
+        # warning onto that second line, silently. Measured, not asserted: give POWER_VENT a second line
+        # (the cover-vs-fan motor v106.6h distinguishes) and a 48in object labelled POWER_VENT lands its
+        # warning on POWER_VENT_MOTOR under out[-1] and on POWER_VENT here. Only base-flashed types are
+        # flaggable — a chimney has no standard base to contradict, so the chimney sub-items v106.6h adds
+        # (flue cap, shroud, chase cover, rain cap) could NOT have triggered this; the exposure is the
+        # vent branches. A branch that forgets `_line` now raises NameError, which is loud.
         if ty == "CHIMNEY":
-            out.append(ScopeLine("Chimney flashing", "CHIMNEY_FLASH", 1, "EA", "CONFIRM",
-                                 "mfr / IRC flashing", _CHIMNEY_CODE.get(a.size_class, "RFG FLCH")))
+            _line = ScopeLine("Chimney flashing", "CHIMNEY_FLASH", 1, "EA", "CONFIRM",
+                              "mfr / IRC flashing", _CHIMNEY_CODE.get(a.size_class, "RFG FLCH"))
         elif ty == "SKYLIGHT":
-            out.append(ScopeLine("Skylight flashing", "SKYLIGHT_FLASH", 1, "EA", "CONFIRM",
-                                 "mfr flashing kit"))
+            _line = ScopeLine("Skylight flashing", "SKYLIGHT_FLASH", 1, "EA", "CONFIRM",
+                              "mfr flashing kit")
         elif ty == "PIPE":
-            out.append(ScopeLine("Pipe-jack flashing", "PIPE_JACK_FLASH", 1, "EA", "AUTO",
-                                 "mfr / IRC flashing"))
+            _line = ScopeLine("Pipe-jack flashing", "PIPE_JACK_FLASH", 1, "EA", "AUTO",
+                              "mfr / IRC flashing")
         elif ty == "TURTLE":
-            out.append(ScopeLine("Turtle / box vent", "BOX_VENT", 1, "EA", "AUTO", "mfr"))
+            _line = ScopeLine("Turtle / box vent", "BOX_VENT", 1, "EA", "AUTO", "mfr")
         elif ty == "TURBINE":
-            out.append(ScopeLine("Turbine vent", "TURBINE_VENT", 1, "EA", "AUTO", "mfr"))
+            _line = ScopeLine("Turbine vent", "TURBINE_VENT", 1, "EA", "AUTO", "mfr")
         elif ty == "POWER_VENT":
             # ONE TYPE, TWO OPERATIONS — and BOTH emit this same line. Whether the shake field is
             # disturbed is decided in the ASSEMBLY (see shared_category_registry.appurtenance_carves),
@@ -322,8 +354,8 @@ def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
             # does not fire — no if-statement suppresses it, and none may ever be added.
             # CONFIRM, not AUTO: unlike a turbine or box vent, a power vent needs a SECOND human
             # assertion (cover vs fan) that materially changes the scope, so it is never automatic.
-            out.append(ScopeLine("Power attic vent", "POWER_VENT", 1, "EA", "CONFIRM",
-                                 "mfr; roof-mount powered attic ventilator"))
+            _line = ScopeLine("Power attic vent", "POWER_VENT", 1, "EA", "CONFIRM",
+                              "mfr; roof-mount powered attic ventilator")
         else:
             # USER-DEFINED ("OTHER") — previously there was NO else branch, so a user-defined
             # appurtenance silently emitted NOTHING and contributed nothing to the material list.
@@ -335,11 +367,16 @@ def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
             #                   rather than dropped or wrongly matched,
             #   * CONFIRM tier: the user must confirm a feature the tool did not classify.
             label = str(a.other_label).strip() if a.other_label else ""
-            category = str(a.other_category).strip() if a.other_category else ""
-            out.append(ScopeLine(
+            _line = ScopeLine(
                 label or "User-defined appurtenance",
-                category if category in REGISTRY_28 else "UNMAPPED",
-                1, "EA", "CONFIRM", "user-defined"))
+                _user_category_or_unmapped(a.other_category),
+                1, "EA", "CONFIRM", "user-defined")
+        # The flag lands on THIS appurtenance's line, by name. The catalog owns the wording
+        # (appurtenance_types.mislabel_citation) so the coursed and membrane sides cannot drift apart.
+        if _mis is not None:
+            _line.gate = "CONFIRM"
+            _line.citation = f"{_line.citation}{_mislabel_citation(_mis)}"
+        out.append(_line)
 
     # --- labor modifiers (§7) ---
     if sf > 0 and iface.facet_pitch_tier in STEEP_TIERS:

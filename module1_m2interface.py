@@ -62,12 +62,19 @@ def build_m1_interface_for_face(
     high_slope_user_flag: bool = False,
     shake_measurements: Optional[Mapping[str, object]] = None,
     is_replacement: bool = False,
+    extra_edges: Iterable[Edge] = (),
 ) -> M1Interface:
     """Translate one confirmed facet stream into Module 2's M1Interface.
 
     This is packaging only: it wraps frozen Module 1 results and creates the
     dataclass objects Module 2 already consumes. It does not do scope math.
-    """
+
+    FRAME v106.3b: `extra_edges` are Edges the CALLER built because this function cannot — it receives
+    `engine_face.edges` as (a, b, edge_type, total_LF) tuples with NO LINE IDENTITY, so it can tell that an
+    edge is a valley but never WHICH valley, and a system boundary is identified by line id. The caller
+    (module2_assembly, which holds the boundary set and the registry) builds those and passes them in
+    EXPLICITLY. Default () keeps every existing call byte-identical, and this is a keyword with no default
+    behaviour of its own: nothing here decides what a boundary is."""
     engine_face = geom.engine_facet(face_id)
     face = geom.faces[face_id]
     confirmed_valleys = tuple(v for v in confirmed_valley_line_ids if v in face.line_ids)
@@ -85,6 +92,7 @@ def build_m1_interface_for_face(
         valley_lf = float(valley_LF_in_scope)
 
     surfaced_edges = _surface_edges(engine_face.facet, valley_events, engine_face.edges, shake_measurements=shake_measurements)
+    surfaced_edges = surfaced_edges + [e for e in extra_edges]
     surfaced_transitions = _surface_transitions(geom, face_id, confirmed_transition_line_ids, valley_events)
     surfaced_appurts = _surface_appurts(confirmed_appurtenance_candidates)
 
@@ -159,7 +167,19 @@ def _surface_appurts(candidates: Iterable[Mapping[str, object]]) -> List[Appurt]
         # contacted/size_class are user classify-and-attribute inputs; default preserves prior behavior
         contacted = bool(params.get("contacted", True)) if isinstance(params, Mapping) else True
         size_class = params.get("size_class") if isinstance(params, Mapping) else None
+        # FRAME v106.6: the two numbers `affected` was just multiplied from, carried through SEPARATELY.
+        # The product cannot be un-multiplied, and the flat family needs the sides (perimeter, cut-back).
+        # Absent on a point marker with no measured base, which is exactly the case Joseph's rule covers
+        # ("a simple point appurtenance … the appurtenance flashing plus 1 patch").
+        _w = float(geom.get("w")) if isinstance(geom, Mapping) and geom.get("w") is not None else None
+        _h = float(geom.get("h")) if isinstance(geom, Mapping) and geom.get("h") is not None else None
         out.append(Appurt(label.upper(), affected_SF=affected, contacted=contacted, size_class=size_class,
+                          width_ft=_w, height_ft=_h,
+                          operation=(params.get("operation") if isinstance(params, Mapping) else None),
+                          host_replaced=bool(params.get("host_replaced")) if isinstance(params, Mapping) else False,
+                          # FRAME v106.6d: the cut line this marker contributes that is not a wall.
+                          shared_edge_ft=(float(params.get("shared_edge_ft") or 0.0)
+                                          if isinstance(params, Mapping) else 0.0),
                           other_label=(params.get("other_label") if isinstance(params, Mapping) else None),
                           other_category=(params.get("other_category") if isinstance(params, Mapping) else None),
                           # EagleView splits ONE physical chimney into one marker per facet it crosses.

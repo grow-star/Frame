@@ -29,13 +29,19 @@ from candidate_model import Candidate
 from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry, _frame_anchor_line   # v105.2: THE ONE anchor rule
 from module1_m2interface import affected_area, build_m1_interface_for_face, edge_contacts, _quiet_import_regression_symbol
 from module1_selected_valley_handoff import selected_valley_handoff
-from scope_contract import Edge, M1Interface, ScopeLine, Transition   # FRAME v104b: the contract from core (the same objects)
+from scope_contract import (Edge, M1Interface, ScopeLine, SYSTEM_BOUNDARY,   # FRAME v106.3b: the boundary edge type
+                            Transition)   # FRAME v104b: the contract from core (the same objects)
 from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
+from geometry_core import shared_edge_overlap_ft   # FRAME v106.6d: the cut line two split markers share
 from module2_scope_expansion import eave_iws_coverage, _eave_iws_citation   # the eave-IWS helpers: not the engine, not dispatched
 # FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired). With a facet in hand, system_for_facet;
 # with none (per-transition, per-edge, per-structure calls), the sole registered system — both v104a's, no third path.
 from roof_systems import get as roof_system, system_for_facet, system_for_facets   # FRAME v105.3: never the SOLE system
+from roof_systems import excluded_facets   # FRAME v106.1: facets this claim does not scope
 from roof_systems import system_for_profile   # FRAME v105.4: the profile's OWN package resolves it
+from roof_systems import system_boundary_tie_in_ft   # FRAME v106.3b: THE ONE evaluation of the boundary ruling
+from roof_systems import appurtenance_clearance_for_facet   # FRAME v106.6c: the facet's own setback
+from roof_systems import appurtenance_clearance_for_facets   # FRAME v106.6c: a merged slope's setback
 from candidate_emitters import emit_valley_candidates          # v93: THE valley facet-pair source (bordering_roof_face_ids)
 from operation_dimension import R_AND_R, REPLACE                  # v93: the canonical operation constants
 from transition_events import (
@@ -46,6 +52,7 @@ from transition_events import (
     transition_metal_facts,
     path_r_transitions,
     transition_bands_by_face,
+    system_boundary_band_for_face,                                # FRAME v106.3b: the same band, on a boundary
     transition_contact_lf,
 )
 from notch_candidate_emitter import emit_notch_candidates, encoding_b_candidate as _emit_encoding_b_candidate
@@ -105,6 +112,24 @@ class AggregatedScopeLine:
 
 
 @dataclass(frozen=True)
+class SystemBoundaryDisclosure:
+    """A facet this claim does NOT scope, and what reached it anyway (FRAME v106.1).
+
+    THE REASON THIS EXISTS AT ALL is the rule already written into this file for appurtenance dedupe:
+    "An over-scope is visible and correctable; an under-scope is not." Dropping an excluded facet's band
+    silently would be exactly that invisible under-scope — the tear-off that vanished on Killarney F36 at
+    v90, which entry 91 then "fixed" by billing shake onto a surface that is not shake. So every drop
+    leaves a receipt the report prints.
+    """
+    face_id: str
+    designator: str
+    edge_id: str
+    edge_type: str
+    dropped_SF: float
+    reason: str
+
+
+@dataclass(frozen=True)
 class RoofAssemblyResult:
     components: Tuple[ComponentAssembly, ...]
     aggregated_scope: Tuple[AggregatedScopeLine, ...]
@@ -145,6 +170,10 @@ class RoofAssemblyResult:
     # HERE, where the component's own two facets are known (Joseph 2026-10-26, see _two_facet_operation);
     # comparison_caller turns the votes into build_comparison's required_operations. Additive, default ().
     two_facet_operations: Tuple[Tuple[str, str, str, Optional[str]], ...] = ()
+    # FRAME v106.1: one entry per facet-band this claim DECLINED to scope because the facet is excluded.
+    # Additive and default-empty, like every field above it: a claim that excludes nothing is byte-identical.
+    # The report prints these, so an excluded facet is never a silent subtraction.
+    system_boundary_disclosures: Tuple[SystemBoundaryDisclosure, ...] = ()
     # FRAME v104d (QA Q1 (a)): the affected SF PER ROOF SYSTEM — claim-level and per structure — summed from the SAME
     # components, in the same order, as affected_SF_raw_total and structure_affected_SF, so with one system each is
     # that figure exactly. A component's system is the material its engine stamped on its lines. A component with area
@@ -166,6 +195,34 @@ _EDGE_DRIVEN_CATEGORIES = {
     "DRIP_EDGE",
     "STEP_FLASH",
     "ENDWALL_FLASH",
+}
+
+# ---- THE CROSS-COMPONENT APPURTENANCE DEDUPE SET — ONE DEFINITION, TWO CALL SITES ------------------
+# FRAME v106.6b. This set decides which lines collapse to ONE when the user has linked several markers as
+# one physical object. The rule it encodes, unchanged since the grouping build:
+#
+#   A COUNT OF THE PHYSICAL OBJECT DEDUPES. A QUANTITY OF MATERIAL DOES NOT.
+#
+# One chimney gets one flashing however many planes it penetrates, so CHIMNEY_FLASH is here. But the
+# carved affected AREA, the APPURT_IWS and — new at v106.6b — the membrane LEG and the repair PATCH are
+# quantities of material on each plane the object really does penetrate, so they are NOT here and must
+# never be added. Deduping a material quantity under-scopes the claim invisibly; an over-scope is visible
+# and correctable, an under-scope is not.
+#
+# WHY IT IS ONE NAME NOW. Until v106.6b this nine-id set existed as TWO identical literals 1,034 lines
+# apart — one local to `assemble_full_roof_scope`, one module-level for `_aggregate_by_structure`. Adding
+# SKYLIGHT_UNIT to one and not the other would make the whole-roof scope and the per-structure scope
+# disagree, silently, on multi-structure claims only. Nothing linked them and nothing would have caught
+# the drift, so the duplicate is removed rather than kept in sync by hand.
+#
+# THIS NAME IS AUTHORITATIVE. Both call sites read it and no other copy exists.
+_APPURT_MATERIAL_CATEGORIES = {
+    "CHIMNEY_FLASH", "SKYLIGHT_FLASH", "PIPE_JACK_FLASH", "BOX_VENT",
+    "TURBINE_VENT", "VENT_CAP", "CHIMNEY_CHASE_COVER", "RIDGE_VENT", "UNMAPPED",
+    # FRAME v106.6b: the skylight UNIT — its own detach-and-reset or replacement. One skylight is one
+    # unit however many planes its curb crosses, so it is a count and it dedupes. Its sibling line, the
+    # 4in membrane curb leg, bills MODBIT_FIELD_RR and is deliberately absent: that is material.
+    "SKYLIGHT_UNIT",
 }
 
 
@@ -201,6 +258,12 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
     selected_meta = selected_valley_handoff(xml_text, selected_valley_ids) if selected_valley_ids else {"selected_valley_LF_total": 0.0}
     selected_valley_lf = float(selected_meta["selected_valley_LF_total"])
     valley_lf_claimed: set[str] = set()
+    # FRAME v106.4 — THE VALLEY FACET-PAIR MAP, computed ONCE here and reused by the operation vote below.
+    # It was built at the vote site only; the boundary test needs it before the claim loops run, and a second
+    # walk of emit_valley_candidates would be a second source for the same fact.
+    _valley_pairs = {str(c.source_ids[0]): tuple(str(f) for f in c.params.get("bordering_roof_face_ids", ()))
+                     for c in emit_valley_candidates(geom)}
+    _boundary_valleys = _system_boundary_valley_ids(_valley_pairs, confirmed_selection)
 
     # --- PATH B: user-confirmed transition repair events (spec amendment v0.1) ---------------
     # The gate (exposed AND damaged) is enforced in transition_events at the DATA layer, so a
@@ -218,18 +281,87 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
 
     active_transitions = _active_transitions(geom, confirmed_selection)
     bands_by_face = transition_bands_by_face(geom, confirmed_selection, shake_measurements) if active_transitions else {}
+    # FRAME v106.3b — THE COURSED SIDE OF A SYSTEM BOUNDARY IS OPENED TOO, and its band joins the SAME dict,
+    # so every rule below it applies unchanged: the incremental union-correct carve, the v72 skip for a facet
+    # already fully replaced, the v106.1 disclosure for an excluded facet, and the per-facet component.
+    #
+    # JOSEPH, 2026-11-04, asked what a FLAT-ONLY replacement does at the transition area. Measured answer
+    # before this: the membrane billed its 0.7608 SQ run up the slope and the shake side billed NOTHING —
+    # yet 20.75 LF x 44 in of existing shake has to come off for that membrane to get under it. He ruled it
+    # should be billed, with the same lines a transition band bills.
+    #
+    # AND IT IS THE SAME RULE, not a new one: transition_bands_by_face's v91 MEMBRANE branch already says
+    # "the steep (UPPER) side is still opened — three courses lifted to tuck the membrane under", and Joseph
+    # approved "the band still carves the untouched slope" on 2026-10-25. It never fired here only because
+    # EagleView types these lines VALLEY, so the geometric detector never offers them.
+    #
+    # NOT SYMMETRIC WITH THE TIE-IN, and deliberately so. The membrane's own line fires when the MEMBRANE is
+    # replaced; this band fires on the coursed side when the FLAT side is replaced. Both follow from one
+    # physical fact: new membrane cannot get under courses that are still nailed down, while existing
+    # membrane under courses nobody lifts simply stays. Replace the shake alone and neither fires — the
+    # shake field already covers the courses it relays, which is Joseph's ruling of 2026-11-04 holding by
+    # construction through the v72 skip below.
+    for _vid, _band_face, _band_lf, _band_ft in _system_boundary_bands(
+            geom, _boundary_valleys, _valley_pairs, confirmed_selection, shake_measurements):
+        bands_by_face.setdefault(_band_face, []).append(
+            system_boundary_band_for_face(geom, _band_face, _vid, _band_lf, _band_ft, shake_measurements))
     if bands_by_face:
         confirmed_selection = {**dict(confirmed_selection), "_transition_bands_by_face": bands_by_face}
 
     components: List[ComponentAssembly] = []
     breakdown: List[Mapping[str, str]] = []
+    # FRAME v106.1 — the facets this claim does not scope, and the receipts for what was declined.
+    _excluded = excluded_facets(confirmed_selection)
+    _boundary_disclosures: List[SystemBoundaryDisclosure] = []
+    # AN EXPLICIT REPAIR ON AN EXCLUDED FACET IS A CONTRADICTION, AND IT RAISES. A transition BAND reaching
+    # an excluded facet is not user error — the band lands on both facets of a shared edge by itself, so that
+    # case is disclosed below. But a valley repair, a full replacement or an appurtenance on an excluded facet
+    # is the user asserting two incompatible things, and core will not pick one. Silently dropping the repair
+    # would be an invisible under-scope; silently billing it is the F36 defect. So it stops and says which.
+    if _excluded:
+        # EACH LIST IS READ BY ITS OWN KEY. They genuinely differ — face_id, host_face_id, host_facet_id,
+        # and notch_repairs carries a LIST of member_face_ids — so one hard-coded "face_id" would KeyError on
+        # an appurtenance and silently miss a notch, billing shake on an excluded member. (QA wrote exactly
+        # that bug first; the gate's selections were too simple to catch it.)
+        _SCOPING_KEYS = (
+            ("single_valley_repairs", "a valley repair", ("face_id",)),
+            ("multi_valley_facets", "a multi-valley repair", ("face_id",)),
+            ("replaced_facets", "a full replacement", ("face_id",)),
+            ("penetration_appurtenance_repairs", "an appurtenance repair", ("host_face_id",)),
+            ("user_appurtenance_repairs", "a user appurtenance", ("host_facet_id",)),
+            ("notch_repairs", "a notch merge", ("member_face_ids",)),
+            ("high_slope_facets", "a high-slope flag", ("face_id",)),
+        )
+        _asked: Dict[str, List[str]] = {}
+        for _key, _label, _fields in _SCOPING_KEYS:
+            for _it in (confirmed_selection.get(_key, ()) or ()):
+                if isinstance(_it, str):
+                    _ids = [_it]
+                else:
+                    _row = _as_mapping(_it)
+                    _ids = []
+                    for _f in _fields:
+                        _v = _row.get(_f)
+                        if _v is None:
+                            continue
+                        _ids.extend(_v if isinstance(_v, (list, tuple, set, frozenset)) else [_v])
+                for _fid in (str(x) for x in _ids):
+                    if _fid in _excluded:
+                        _asked.setdefault(_fid, []).append(_label)
+        if _asked:
+            _detail = "; ".join(f"{f}: {', '.join(sorted(set(v)))}" for f, v in sorted(_asked.items()))
+            raise ValueError(
+                f"FRAME: {sorted(_asked)} are listed in excluded_facets but the selection also asks to scope "
+                f"them ({_detail}). An excluded facet is not scoped at all. Fix: remove each facet from "
+                f"excluded_facets, or remove the repair that scopes it.")
 
     for item in confirmed_selection.get("single_valley_repairs", ()):  # type: ignore[union-attr]
         row = _as_mapping(item)
         face_id = str(row["face_id"])
         valley_id = str(row["valley_id"])
         _require_valley_borders_face(geom, valley_id, face_id)
-        valley_lf = _claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed)
+        valley_lf = _claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed,
+                                          _boundary_valleys)
         affected = _single_valley_area(geom, face_id, valley_id, confirmed_selection)
         iface = build_m1_interface_for_face(
             geom,
@@ -241,6 +373,9 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             shake_measurements=shake_measurements,
             facet_pitch_tier=_facet_pitch_tier(geom, face_id),
             high_slope_user_flag=(str(face_id) in _high_slope),
+            # FRAME v106.3b: the repair's OWN valley, so a boundary at the other end of the facet is untouched.
+            extra_edges=_system_boundary_edges(geom, face_id, (valley_id,), _boundary_valleys,
+                                               _valley_pairs, confirmed_selection, shake_measurements),
         )
         edge_contribs = _face_edge_contributions(geom, face_id, (valley_id,), str(row.get("label", face_id)), shake_measurements)
         components.append(_component(row, face_id, "single_valley", "derived", "fully_surfaced", "face, valley event, edges, and valley LF derived from parser/candidates", iface, edge_contribs, confirmed_selection=confirmed_selection))
@@ -252,7 +387,8 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         valley_ids = tuple(str(v) for v in row.get("valley_ids", ()))
         for valley_id in valley_ids:
             _require_valley_borders_face(geom, valley_id, face_id)
-        valley_lf = sum(_claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed) for valley_id in valley_ids)
+        valley_lf = sum(_claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed,
+                                              _boundary_valleys) for valley_id in valley_ids)
         affected = _multi_valley_union_area(geom, face_id, valley_ids, confirmed_selection, include_child_penetrations=bool(row.get("include_child_penetrations", True)))
         iface = build_m1_interface_for_face(
             geom,
@@ -264,6 +400,8 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             shake_measurements=shake_measurements,
             facet_pitch_tier=_facet_pitch_tier(geom, face_id),
             high_slope_user_flag=(str(face_id) in _high_slope),
+            extra_edges=_system_boundary_edges(geom, face_id, valley_ids, _boundary_valleys,
+                                               _valley_pairs, confirmed_selection, shake_measurements),
         )
         edge_contribs = _face_edge_contributions(geom, face_id, valley_ids, str(row.get("label", face_id)), shake_measurements)
         components.append(_component(row, face_id, "multi_valley", "derived", "fully_surfaced", "multi-valley union, edges, and non-duplicated selected valley LF derived from parser/candidates", iface, edge_contribs, confirmed_selection=confirmed_selection))
@@ -292,7 +430,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             raise ValueError(f"replaced facet {face_id} is not a roof facet")
         label = str(row.get("label", face_id))
         affected = _replacement_facet_area(geom, face_id)
-        valley_lf = sum(_claim_replacement_valley_lf(geom, vid, valley_lf_claimed)
+        valley_lf = sum(_claim_replacement_valley_lf(geom, vid, valley_lf_claimed, _boundary_valleys)
                         for vid in _facet_valley_ids(geom, face_id))
         iface = build_m1_interface_for_face(
             geom,
@@ -305,6 +443,11 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             facet_pitch_tier=_facet_pitch_tier(geom, face_id),
             high_slope_user_flag=(face_id in _high_slope),
             is_replacement=True,
+            # FRAME v106.3b: a stripped facet takes its WHOLE perimeter, so EVERY boundary on it is in scope —
+            # the same `_facet_valley_ids` the valley claim two lines above uses, for the same reason.
+            extra_edges=_system_boundary_edges(geom, face_id, _facet_valley_ids(geom, face_id),
+                                               _boundary_valleys, _valley_pairs, confirmed_selection,
+                                               shake_measurements),
         )
         edge_contribs = _replacement_edge_contributions(geom, face_id, label)
         components.append(_component(row, face_id, "replacement", "derived", "fully_surfaced",
@@ -321,7 +464,8 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         # point category reroutes. Measured w/h ride along for APPURT_IWS (geometry_core.appurtenance_zone_geometry).
         candidate = Candidate(kind=candidate.kind, source_ids=candidate.source_ids, origin=candidate.origin,
             params={**candidate.params, "appurtenance_geometry": appurtenance_zone_geometry(
-                candidate.params.get("appurtenance_geometry"), row.get("kind_label", "CHIMNEY"), row.get("other_category"))})
+                candidate.params.get("appurtenance_geometry"), row.get("kind_label", "CHIMNEY"),
+                row.get("other_category"))})   # FRAME v106.6g: routed by TYPE; no clearance resolved here
         _rfacets = set()
         for _it in confirmed_selection.get("single_valley_repairs", ()): _rfacets.add(str(_as_mapping(_it)["face_id"]))
         for _it in confirmed_selection.get("multi_valley_facets", ()): _rfacets.add(str(_as_mapping(_it)["face_id"]))
@@ -337,7 +481,10 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         _carves = appurtenance_carves(row)
         _replaced_ids = {str(_as_mapping(_it)["face_id"]) for _it in confirmed_selection.get("replaced_facets", ())}
         affected = _appurtenance_union_affected_area(geom, host_face_id, candidate, confirmed_selection, _carves, _replaced_ids, _rfacets)
-        appurt_candidate = _with_appurtenance_label(candidate, str(row.get("kind_label", "CHIMNEY")), str(row.get("group", penetration_id)), row.get("contacted"), row.get("size_class"), carves=_carves, other_label=row.get("other_label"), other_category=row.get("other_category"))
+        appurt_candidate = _with_appurtenance_label(candidate, str(row.get("kind_label", "CHIMNEY")), str(row.get("group", penetration_id)), row.get("contacted"), row.get("size_class"), carves=_carves, other_label=row.get("other_label"), other_category=row.get("other_category"),
+            operation=(row.get("operation") or row.get("skylight_operation") or row.get("power_vent_operation")),
+            host_replaced=str(host_face_id) in _replaced_ids,
+            shared_edge_ft=_group_shared_edge_ft(geom, row, penetration_id, host_face_id, confirmed_selection))
         iface = build_m1_interface_for_face(
             geom,
             host_face_id,
@@ -360,7 +507,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         if not bool(row.get("repair_event", True)):
             continue
         host_face_id = str(row["host_facet_id"])
-        candidate = _user_appurtenance_candidate_from_row(row)
+        candidate = _user_appurtenance_candidate_from_row(row, confirmed_selection)
         _rfacets = set()
         for _it in confirmed_selection.get("single_valley_repairs", ()): _rfacets.add(str(_as_mapping(_it)["face_id"]))
         for _it in confirmed_selection.get("multi_valley_facets", ()): _rfacets.add(str(_as_mapping(_it)["face_id"]))
@@ -372,7 +519,9 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         _carves = appurtenance_carves(row)
         _replaced_ids = {str(_as_mapping(_it)["face_id"]) for _it in confirmed_selection.get("replaced_facets", ())}
         affected = _appurtenance_union_affected_area(geom, host_face_id, candidate, confirmed_selection, _carves, _replaced_ids, _rfacets)
-        appurt_candidate = _with_appurtenance_label(candidate, str(row.get("kind_label", "OTHER")), str(row.get("designator") or row.get("label") or "user"), row.get("contacted"), row.get("size_class"), carves=_carves, other_label=row.get("other_label"), other_category=row.get("other_category"))
+        appurt_candidate = _with_appurtenance_label(candidate, str(row.get("kind_label", "OTHER")), str(row.get("designator") or row.get("label") or "user"), row.get("contacted"), row.get("size_class"), carves=_carves, other_label=row.get("other_label"), other_category=row.get("other_category"),
+            operation=(row.get("operation") or row.get("skylight_operation") or row.get("power_vent_operation")),
+            host_replaced=str(host_face_id) in _replaced_ids)
         iface = build_m1_interface_for_face(
             geom,
             host_face_id,
@@ -394,7 +543,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         row = _as_mapping(item)
         member_face_ids = tuple(str(v) for v in row["member_face_ids"])
         candidate = _require_notch_candidate(notch_candidates, member_face_ids)
-        iface, edge_contribs = _build_m1_interface_for_notch(geom, candidate, selected_valley_ids, valley_lf_claimed, str(row.get("label", "+".join(member_face_ids))), confirmed_selection=confirmed_selection, override_valley_ids=row.get("valley_ids"), shake_measurements=shake_measurements)
+        iface, edge_contribs = _build_m1_interface_for_notch(geom, candidate, selected_valley_ids, valley_lf_claimed, str(row.get("label", "+".join(member_face_ids))), confirmed_selection=confirmed_selection, override_valley_ids=row.get("valley_ids"), shake_measurements=shake_measurements, boundary_valleys=_boundary_valleys)
         components.append(_component(row, "+".join(member_face_ids), "notch", "derived", "fully_surfaced", "merged facet, notch polygon, RIDGE anchor, VALLEY events, and edges derived from notch candidate", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
@@ -428,13 +577,47 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         engine_face = geom.engine_facet(face_id)
         pens = _penetrations_with_user_footprints(geom, confirmed_selection, face_id)
         apps = _confirmed_appurtenance_geometries_for_face(geom, confirmed_selection, face_id)
+        # FRAME v106.6c: this pair measures a transition band's INCREMENTAL area, differencing two carves of
+        # the same facet. Both must name the facet's covering, and name the SAME one — a band's net area is
+        # `area_with - area_without`, so if the two carves used different clearances the appurtenance zones
+        # would not cancel and the band would absorb the difference as if it were band.
+        _facet_sys = system_for_facet(face_id, confirmed_selection)
         _p0, area_without = affected_area(
             engine_face.facet, [], appurtenances=apps, penetrations=pens,
-            shake_measurements=shake_measurements)
+            shake_measurements=shake_measurements, facet_system_id=_facet_sys)
         _p1, area_with = affected_area(
             engine_face.facet, [], appurtenances=apps, penetrations=pens,
-            shake_measurements=shake_measurements, transition_bands=engine_bands(bands))
+            shake_measurements=shake_measurements, transition_bands=engine_bands(bands),
+            facet_system_id=_facet_sys)
         net_area = max(0.0, float(area_with) - float(area_without))   # incremental, union-correct
+
+        # FRAME v106.1 — AN EXCLUDED FACET TAKES NO BAND, AND LEAVES A RECEIPT. A transition's band lands on
+        # BOTH its facets automatically; when one of them is not scoped by this claim, billing it is the
+        # Killarney F36 defect (entry 115d): 5.6112 SF and 12 EA of wood shake carved onto a surface that is
+        # not wood shake. Dropping it SILENTLY would be the opposite error and the worse one — this file's own
+        # rule, written for appurtenance dedupe, is that an over-scope is visible and an under-scope is not —
+        # so the drop is disclosed with the exact area it withheld.
+        #
+        # The check sits HERE, after net_area, and not at the top of the loop, so the disclosed figure is the
+        # SAME arithmetic that would have billed it: one computation, then the decision. A separate helper
+        # would be a second copy of the union-correct incremental carve, free to drift from this one.
+        #
+        # The scoped side is untouched: the roof-level TRANSITION_FLASH still bills at edge_total_LF, because
+        # the trade doing the scoped side installs the flashing (Joseph, entry 104 — each side applies its own
+        # termination).
+        # ONE row per excluded FACET, not per edge: net_area is the facet's whole incremental carve for ALL
+        # its bands together (Killarney F36 takes bands from both L24 and L34, totalling 5.6112 SF). A row per
+        # edge would repeat that figure and read as twice the area withheld.
+        if str(face_id) in _excluded:
+            _lids = sorted({str(_as_mapping(_b)["edge_id"]) for _b in bands}, key=_id_sort_key)
+            _boundary_disclosures.append(SystemBoundaryDisclosure(
+                face_id=str(face_id),
+                designator=str(geom.faces[face_id].designator or ""),
+                edge_id=", ".join(_lids),
+                edge_type=", ".join(sorted({str(geom.lines[l].type) for l in _lids if l in geom.lines})),
+                dropped_SF=round(net_area, 4),
+                reason="facet excluded from this scope: not the scoped roof system"))
+            continue
 
         iface = build_m1_interface_for_face(
             geom,
@@ -512,8 +695,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
     #   * APPURT_IWS stays per marker (both planes need ice & water).
     # Deduping either would silently UNDER-SCOPE the claim — invisible, and therefore worse than no
     # feature at all. An over-scope is visible and correctable; an under-scope is not.
-    _APPURT_MATERIAL = {"CHIMNEY_FLASH", "SKYLIGHT_FLASH", "PIPE_JACK_FLASH", "BOX_VENT",
-                        "TURBINE_VENT", "VENT_CAP", "CHIMNEY_CHASE_COVER", "RIDGE_VENT", "UNMAPPED"}
+    # The set itself is _APPURT_MATERIAL_CATEGORIES, defined once near the top of this module.
     _seen_appurt_groups: set = set()
     non_edge_lines: List[ScopeLine] = []
     all_edge_contribs: List[EdgeContribution] = []
@@ -522,7 +704,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         for line in comp.scope_lines:
             if line.category_id in _EDGE_DRIVEN_CATEGORIES:
                 continue
-            if gid is not None and line.category_id in _APPURT_MATERIAL:
+            if gid is not None and line.category_id in _APPURT_MATERIAL_CATEGORIES:
                 key = (gid, line.category_id)
                 if key in _seen_appurt_groups:
                     continue                # same physical object -> its material line is already billed
@@ -614,8 +796,8 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
     #   valleys:     candidate_emitters.emit_valley_candidates' bordering_roof_face_ids — only valleys whose LF
     #                was claimed into VALLEY_METAL (valley_lf_claimed, the claim-once authority)
     _replaced = replaced_face_ids(confirmed_selection)
-    _valley_pairs = {str(c.source_ids[0]): tuple(c.params.get("bordering_roof_face_ids", ()))
-                     for c in emit_valley_candidates(geom)}
+    # FRAME v106.4: built ONCE at the top of this function (the boundary test needs it before the claim
+    # loops), so the vote reuses it rather than walking emit_valley_candidates a second time.
     two_facet_votes = [
         (_structure_of_face(geom, t.face_a_id), "TRANSITION_FLASH", str(t.edge_id),
          _two_facet_operation((t.face_a_id, t.face_b_id), _replaced))
@@ -646,6 +828,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         repair_facets_by_structure=repair_facets_by_structure,
         eave_iws=eave_iws_meta,
         two_facet_operations=tuple(two_facet_votes),
+        system_boundary_disclosures=tuple(_boundary_disclosures),
     )
 
 
@@ -763,7 +946,9 @@ def _confirmed_appurtenance_geometries_for_face(geom: EagleViewGeometry, confirm
             candidate = _penetration_candidate_from_geom(geom, host, pen_id)
             # FRAME v102: this list rebuilds the penetration candidate itself, so it routes it the same way the
             # assembly's penetration loop does — the band must cancel the zone the appurtenance actually claims.
-            out.append(dict(appurtenance_zone_geometry(candidate.params["appurtenance_geometry"], row.get("kind_label", "CHIMNEY"), row.get("other_category"))))
+            out.append(dict(appurtenance_zone_geometry(
+                candidate.params["appurtenance_geometry"], row.get("kind_label", "CHIMNEY"),
+                row.get("other_category"))))   # FRAME v106.6g: routed by TYPE; no clearance here
         except Exception:
             continue
     for row in _user_footprints_for_face(confirmed_selection, face_id) or ():
@@ -1038,13 +1223,14 @@ def encoding_b_zone(geom: EagleViewGeometry, face_id: str, valley_ids, confirmed
     return float(affected), zone, gx, gy, facet
 
 
-def _build_m1_interface_for_notch(geom: EagleViewGeometry, candidate: Candidate, selected_valley_ids: Sequence[str], claimed: set[str], label: str, confirmed_selection: Mapping[str, object] | None = None, override_valley_ids=None, shake_measurements=None) -> Tuple[M1Interface, Tuple[EdgeContribution, ...]]:
+def _build_m1_interface_for_notch(geom: EagleViewGeometry, candidate: Candidate, selected_valley_ids: Sequence[str], claimed: set[str], label: str, confirmed_selection: Mapping[str, object] | None = None, override_valley_ids=None, shake_measurements=None, boundary_valleys: frozenset = frozenset()) -> Tuple[M1Interface, Tuple[EdgeContribution, ...]]:
     frame, facet, notches, valley_ids, valley_events, pens = _notch_reframe_geometry(geom, candidate, confirmed_selection, override_valley_ids=override_valley_ids)
     _per_event, affected = affected_area(facet, valley_events, notches=notches, penetrations=pens, shake_measurements=shake_measurements)
     edge_tuples_with_ids = _notch_outer_edge_tuples_with_ids(geom, candidate, frame)
     edge_tuples = [(a, b, edge_type, total_lf) for _line_id, a, b, edge_type, total_lf in edge_tuples_with_ids]
     edges, edge_contribs = _surface_physical_edges(facet, valley_events, edge_tuples_with_ids, label, shake_measurements)
-    valley_lf = sum(_claim_valley_lf_once(geom, valley_id, selected_valley_ids, claimed) for valley_id in valley_ids)
+    valley_lf = sum(_claim_valley_lf_once(geom, valley_id, selected_valley_ids, claimed, boundary_valleys)
+                    for valley_id in valley_ids)
     return M1Interface(affected_SF=float(affected), valley_LF_in_scope=float(valley_lf), edges=edges, appurts=[], transitions=[], shake_width_in=float((shake_measurements or {}).get("width_in", 7.0)), exposure_in=float((shake_measurements or {}).get("exposure_in", 10.0)), length_in=float((shake_measurements or {}).get("length_in", 24.0))), tuple(edge_contribs)
 
 
@@ -1116,10 +1302,17 @@ def _facet_valley_ids(geom: EagleViewGeometry, face_id: str) -> Tuple[str, ...]:
                  if lid in geom.lines and geom.lines[lid].type.upper() == "VALLEY")
 
 
-def _claim_replacement_valley_lf(geom: EagleViewGeometry, valley_id: str, claimed: set) -> float:
+def _claim_replacement_valley_lf(geom: EagleViewGeometry, valley_id: str, claimed: set,
+                                 boundary_valleys: frozenset = frozenset()) -> float:
     """The WHOLE valley on a replaced facet's perimeter is in scope (you cannot replace half a
     W-metal), independent of the user's selected_valley_ids — but claimed ONCE, deduped against any
-    adjoining facet (repair or replacement) that also claims it, exactly like _claim_valley_lf_once."""
+    adjoining facet (repair or replacement) that also claims it, exactly like _claim_valley_lf_once.
+
+    FRAME v106.4: and a SYSTEM BOUNDARY valley is claimed by NEITHER side (_system_boundary_valley_ids).
+    Which side claimed first used to decide whether a boundary valley was billed at all, because one
+    system's engine bills from valley_LF_in_scope and the other's does not read it."""
+    if valley_id in boundary_valleys:
+        return 0.0
     if valley_id in claimed or valley_id not in geom.valley_lengths:
         return 0.0
     claimed.add(valley_id)
@@ -1225,6 +1418,7 @@ def _appurtenance_net_affected_area(geom: EagleViewGeometry, host_face_id: str, 
         engine_face.facet,
         [],
         appurtenances=[dict(candidate.params["appurtenance_geometry"])],
+        facet_system_id=system_for_facet(host_face_id, confirmed_selection or {}),   # FRAME v106.6c
         penetrations=appurtenance_zone_holes(candidate.params["appurtenance_geometry"], _penetrations_with_user_footprints(geom, confirmed_selection, host_face_id)),  # FRAME v103: a point zone is not carved by its own hole
         return_zone=True,
         shake_measurements=shake_measurements,
@@ -1269,7 +1463,9 @@ def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candid
     holes = _dimensional_pens(pens)
     app = _candidate_appurtenance_geometry_in_frame(geom, appurtenance_candidate, frame)
     _per_app, _app_area, app_zone, gx, gy = affected_area(
-        facet, [], notches=notches, appurtenances=[app], penetrations=appurtenance_zone_holes(app, holes), return_zone=True,  # FRAME v103: a point zone is not carved by its own hole
+        facet, [], notches=notches, appurtenances=[app], penetrations=appurtenance_zone_holes(app, holes), return_zone=True,  # FRAME v103
+        facet_system_id=system_for_facets(notch_candidate.params["member_face_ids"], confirmed_selection or {},
+                                          "an appurtenance carve on a merged slope"),   # FRAME v106.6c: a point zone is not carved by its own hole
         shake_measurements=shake_measurements
     )
 
@@ -1304,6 +1500,7 @@ def _appurtenance_affected_area(geom: EagleViewGeometry, host_face_id: str, cand
         engine_face.facet,
         [],
         appurtenances=[dict(candidate.params["appurtenance_geometry"])],
+        facet_system_id=system_for_facet(host_face_id, confirmed_selection or {}),   # FRAME v106.6c
         penetrations=appurtenance_zone_holes(candidate.params["appurtenance_geometry"], _penetrations_with_user_footprints(geom, confirmed_selection or {}, host_face_id)),  # FRAME v103: a point zone is not carved by its own hole
         return_zone=True,
         shake_measurements=shake_measurements,
@@ -1346,6 +1543,8 @@ def _merged_appurtenance_affected_area(geom: EagleViewGeometry, notch_candidate:
         [],
         notches=notches,
         appurtenances=[app],
+        facet_system_id=system_for_facets(notch_candidate.params["member_face_ids"], confirmed_selection or {},
+                                          "an appurtenance carve on a merged slope"),   # FRAME v106.6c
         penetrations=appurtenance_zone_holes(app, _dimensional_pens(pens)),  # FRAME v103: a point zone is not carved by its own hole
         return_zone=True,
         shake_measurements=shake_measurements,
@@ -1411,7 +1610,11 @@ def _user_footprint_polygon_local(row: Mapping[str, object]):
     return [(cx - hw, cy - hh), (cx + hw, cy - hh), (cx + hw, cy + hh), (cx - hw, cy + hh)]
 
 
-def _user_appurtenance_candidate_from_row(row: Mapping[str, object]) -> Candidate:
+def _user_appurtenance_candidate_from_row(row: Mapping[str, object],
+                                          confirmed_selection: Mapping[str, object] | None = None) -> Candidate:
+    # FRAME v106.6c: the selection is needed to route this row's zone by the HOST FACET's covering.
+    # It defaults to None so the signature stays additive, and None resolves exactly as before:
+    # system_for_facet falls through to the predominant system, then to the sole registered one.
     host_face_id = str(row["host_facet_id"])
     position = row.get("position")
     if not isinstance(position, Mapping):
@@ -1440,9 +1643,15 @@ def _user_appurtenance_candidate_from_row(row: Mapping[str, object]) -> Candidat
             "width": app_geom.get("w"),
             "height": app_geom.get("h"),
             "appurtenance_shape": shape,
-            # FRAME v102: the TYPE decides the zone. A point category takes the 21" zone whatever shape was
-            # declared; everything else keeps app_geom exactly as built above (geometry_core).
-            "appurtenance_geometry": appurtenance_zone_geometry(app_geom, row.get("kind_label") or "OTHER", row.get("other_category")),
+            # FRAME v102/v106.6g: the TYPE decides the zone, by its FLASHING METHOD and by nothing else.
+            # A base-flashed type becomes a point carrying its own STANDARD FLASHING BASE, to which the
+            # package adds its base allowance - not the 21" curb zone an earlier comment here named, and not
+            # the declared shape. Everything else keeps app_geom exactly as built above (geometry_core).
+            # The row's other_category is passed because a row saying OTHER names its real thing there, and
+            # some categories (VENT_CAP) are reachable ONLY that way.
+            "appurtenance_geometry": appurtenance_zone_geometry(
+                app_geom, row.get("kind_label") or "OTHER",
+                row.get("other_category")),   # FRAME v106.6g: routed by TYPE; no clearance resolved here
             "kind_label": str(row.get("kind_label") or "OTHER"),
             "designator": str(row.get("designator") or row.get("label") or "user"),
         },
@@ -1456,8 +1665,17 @@ def _candidate_appurtenance_geometry_in_frame(geom: EagleViewGeometry, candidate
         # candidate's geometry was routed BY TYPE where it was built, so a point-routed penetration keeps the
         # point zone here too — the type decides, never this re-measurement.
         app = _appurtenance_geometry_in_frame(geom, str(params["penetration_face_id"]), frame)
-        if (params.get("appurtenance_geometry") or {}).get("kind") == "point":
-            return {**app, "kind": "point"}
+        # FRAME v106.6g: `app` here is a FRESH re-measurement of the penetration face, not the routed
+        # candidate geometry, so spreading it carries none of the routing. The TYPE's standard flashing base
+        # has to be taken from the routed geometry explicitly. QA swept for this pattern, saw this line, and
+        # judged it safe because it spreads a dict - the dict it spreads is the wrong one. Yager's F71 on the
+        # merged plane read 3.0976 SF, the bare clearance square, until this carried the base.
+        _routed = params.get("appurtenance_geometry") or {}
+        if _routed.get("kind") == "point":
+            _out = {**app, "kind": "point"}
+            if _routed.get("standard_base_in") is not None:
+                _out["standard_base_in"] = float(_routed["standard_base_in"])
+            return _out
         return app
     app = params.get("appurtenance_geometry")
     if not isinstance(app, Mapping):
@@ -1466,7 +1684,15 @@ def _candidate_appurtenance_geometry_in_frame(geom: EagleViewGeometry, candidate
     center = _face_local_point_to_3d(geom, host_face_id, float(app["cx"]), float(app["cy"]))
     cx, cy = (float(v) for v in frame(center))
     if app.get("kind") == "point":
-        return {"cx": cx, "cy": cy, "kind": "point"}
+        # FRAME v106.6g: the TYPE's standard flashing base travels with the zone, so it must survive being
+        # rebuilt in a facet frame. Dropping it silently reverts a merged-plane vent to the bare clearance
+        # square - Yager's F71 read 3.0976 SF instead of 3.3856 until this line carried it. Same shape as
+        # v106.6d's shared_edge_ft carry-through: a reader that reconstructs a record loses every field it
+        # does not name.
+        _out = {"cx": cx, "cy": cy, "kind": "point"}
+        if app.get("standard_base_in") is not None:
+            _out["standard_base_in"] = float(app["standard_base_in"])
+        return _out
     return {"cx": cx, "cy": cy, "w": float(app["w"]), "h": float(app["h"]), "kind": "dimensioned"}
 
 
@@ -1497,7 +1723,41 @@ def _appurtenance_geometry_in_frame(geom: EagleViewGeometry, penetration_id: str
     }
 
 
-def _with_appurtenance_label(candidate: Candidate, kind_label: str, group: Optional[str], contacted=None, size_class=None, carves: bool = True, other_label=None, other_category=None) -> Mapping[str, object]:
+def _group_shared_edge_ft(geom, row, penetration_id, host_face_id, confirmed_selection) -> float:
+    """How much of THIS marker's perimeter is the cut line EagleView made, not a chase wall (FRAME v106.6d).
+
+    Summed over this marker's group-mates on ADJACENT facets, because one object may cross more than one
+    ridge: a three-member chain A-B-C charges A for its overlap with B, C for its overlap with B, and B for
+    both — so every cut line is charged exactly twice, once from each side, which is exactly how many
+    phantom walls the split created.
+
+    Only a LINKED group is corrected. The group id comes from the user's "Same physical item as..." link on
+    page 2, the same authority that already decides the flashing dedupe, and an unlinked marker's group
+    defaults to its own penetration id — so it has no mates and is corrected by nothing. Two separate
+    chimneys either side of a ridge really do have four walls each."""
+    # NO early return for "gid == own penetration id". It would be redundant under page 2's own convention,
+    # which mints a group id as 'grp_' + the anchor's id (linkMarkers), so a group id never equals a member's
+    # penetration id and an unlinked marker has no mate whose group matches — the loop below returns 0.0 on its
+    # own. It would also be HARMFUL under the other convention a producer might reasonably pick: naming the
+    # group after the anchor ("F68"). Under that convention the guard fires on the anchor and not on the
+    # follower, so only ONE of the two phantom walls comes off and the correction silently halves. Deleting the
+    # guard makes this helper correct under both conventions and keeps the symmetry the docstring promises.
+    # Found by mutation: removing the guard changed nothing on any real claim, which is what proved it dead.
+    gid = str(row.get("group", penetration_id))
+    total = 0.0
+    for other in confirmed_selection.get("penetration_appurtenance_repairs", ()) or ():
+        o = _as_mapping(other)
+        o_pen = str(o.get("penetration_face_id") or "")
+        if not o_pen or o_pen == str(penetration_id):
+            continue
+        if str(o.get("group", o_pen)) != gid:
+            continue
+        total += shared_edge_overlap_ft(geom, str(host_face_id), str(o.get("host_face_id") or ""),
+                                        str(penetration_id), o_pen)
+    return total
+
+
+def _with_appurtenance_label(candidate: Candidate, kind_label: str, group: Optional[str], contacted=None, size_class=None, carves: bool = True, other_label=None, other_category=None, operation=None, host_replaced: bool = False, shared_edge_ft: float = 0.0) -> Mapping[str, object]:
     params = dict(candidate.params)
     params["kind_label"] = kind_label
     if group is not None:
@@ -1513,6 +1773,23 @@ def _with_appurtenance_label(candidate: Candidate, kind_label: str, group: Optio
         params["other_label"] = str(other_label)
     if other_category not in (None, ""):
         params["other_category"] = str(other_category)
+    # FRAME v106.6 — the SECOND assertion (skylight reset-vs-replace, power vent cover-vs-fan), carried to
+    # the engine that bills the line. The assembly already reads this same key for the area carve, so the
+    # picture and the line read ONE answer.
+    if operation not in (None, ""):
+        params["operation"] = str(operation)
+    # FRAME v106.6d — the cut line this marker contributes that is not a wall. Always carried, including the
+    # 0.0 case, so the engine reads one key rather than inferring an absent one.
+    params["shared_edge_ft"] = float(shared_edge_ft or 0.0)
+    # FRAME v106.6 — IS THE HOST FACET BEING REPLACED? Joseph, 2026-11-04: the repair patch is "only for
+    # repairs, not for facet replacement. Replacement facet just gets the SQ."
+    #
+    # QA GOT THIS WRONG FIRST and the gate caught it: the engine read `iface.is_replacement`, which is FALSE
+    # on an appurtenance component even when its host facet IS being replaced — only the replacement loop
+    # sets that flag, and an appurtenance repair is its own component. The fact the rule needs is about the
+    # HOST FACET, not about this component, so it is carried as its own fact under its own name rather than
+    # borrowed from a flag that means something else.
+    params["host_replaced"] = bool(host_replaced)
     if not carves:
         # A NON-CARVING appurtenance (today: a cover-only power attic vent) has NO disturbance
         # footprint at all, so it is handed to Module 2 with no appurtenance_geometry.
@@ -1537,8 +1814,6 @@ _XACT_SIZE_LABEL = {
 
 # Module-level copy of the appurtenance-material categories, so per-structure aggregation dedupes one
 # physical object exactly the way the global loop does. Kept in sync with the local set in the assembly.
-_APPURT_MATERIAL_CATEGORIES = {"CHIMNEY_FLASH", "SKYLIGHT_FLASH", "PIPE_JACK_FLASH", "BOX_VENT",
-                               "TURBINE_VENT", "VENT_CAP", "CHIMNEY_CHASE_COVER", "RIDGE_VENT", "UNMAPPED"}
 
 
 def _structure_of_face(geom: EagleViewGeometry, face_id: str) -> str:
@@ -1807,7 +2082,194 @@ def field_summary(result):
             "field_by_system": {sysid: [[q, u] for q, u in v] for sysid, v in by_system.items()}}
 
 
-def _claim_valley_lf_once(geom: EagleViewGeometry, valley_id: str, selected_valley_ids: Sequence[str], claimed: set[str]) -> float:
+def _system_boundary_valley_ids(valley_pairs: Mapping[str, Sequence[str]], confirmed_selection) -> frozenset:
+    """THE ONE test for "this valley sits on a SYSTEM BOUNDARY" (FRAME v106.4).
+
+    A valley whose two bordering roof facets resolve to DIFFERENT roof systems is a boundary, and a boundary
+    bills NO valley metal and NO valley underlayment from either side. Three things say so, and they agree:
+
+      * Joseph's own ruling, recorded in the roadmap: Yager as a replacement billing 154.78 LF "instead of
+        134.03" is a CONFIRMED OVER-BILL, and the 20.75 LF difference is exactly L30 + L36 + L45 + L49 — the
+        four shake-to-MODBIT boundaries. So removing them is removing an over-bill, not creating a shortfall.
+      * What is physically there. Joseph, on these very edges: "the last roofer decided it was better to put
+        a membrane surface in this essentially dead valley area." There is no W-metal valley to bill.
+      * The engine ALREADY encodes it elsewhere. `METAL_MEMBRANE` is documented as "flat-roof membrane runs
+        up under the courses: it IS the flashing and the underlayment", and wood shake's own
+        `transition_emits_underlayment` is literally `metal != METAL_MEMBRANE`. This extends that same rule
+        from the transition path to the valley claim; it does not invent one.
+
+    WHY THIS HAD TO BECOME A RULE (QA error 74). `valley_lf_claimed` claims each valley ONCE, for the first
+    facet in LIST ORDER that touches it, and that facet's engine then bills from its own
+    `valley_LF_in_scope`. At one package every claimer billed identically, so order never mattered. With a
+    SECOND package whose engine does not read `valley_LF_in_scope` at all, the claim-once dedupe silently
+    decided which system saw a boundary valley: MODBIT first and it was dropped (134.03), shake first and it
+    was billed (154.78). Measured on Yager: string-sorted order gave 134.03, page 2's own `naturalCompare`
+    order gave 154.78, and shuffles gave 141.15, 147.66 and 153.06. Both paths were affected — the
+    replacement claim and, measured separately, the repair claim on all four boundaries.
+
+    Deciding by rule makes it ORDER-INDEPENDENT. Canonicalising the iteration order instead would have kept
+    first-claimer semantics as a hidden rule, which is the kind of decision-by-accident this codebase removes.
+
+    ON A SINGLE-PACKAGE CLAIM THIS IS ALWAYS EMPTY: every facet resolves to the same system, so nothing
+    changes for any claim that declares one covering or none — which is every saved claim and every frozen
+    render.
+    """
+    out = set()
+    for vid, faces in valley_pairs.items():
+        if len(faces) < 2:
+            continue
+        if len({system_for_facet(f, confirmed_selection) for f in faces}) > 1:
+            out.add(str(vid))
+    return frozenset(out)
+
+
+def _system_boundary_bands(geom: EagleViewGeometry, boundary_valleys: frozenset,
+                           valley_pairs: Mapping[str, Sequence[str]], confirmed_selection,
+                           shake_measurements=None):
+    """Which COURSED facets have courses to lift, because the FLAT side of a boundary is being replaced.
+
+    Yields (valley_id, coursed_face_id, edge_total_LF, extent_ft) — THE ONE place that decision is made.
+    Returns nothing on a single-package claim (no boundaries) and nothing when no flat facet is replaced,
+    so every saved claim and frozen render is untouched by construction, exactly as the edges are.
+
+    WHICH SIDE IS COURSED is a registry fact, never an assumption about which way a roof slopes: the coursed
+    side is the one whose package declares `course_top_ft`, and the flat side is the one that declares
+    `tie_in_courses`. `system_boundary_tie_in_ft` composes exactly those two declarations, so asking it for
+    the FLAT side's view returns a positive extent precisely when there is a coursed neighbour with courses
+    to lift — and that same number is what the membrane's own tie-in line bills. One call, one number, two
+    lines that cannot drift apart.
+
+    A boundary with no flat side (shake meeting shake), or two flat sides (MODBIT meeting TPO), yields
+    nothing: the first is not a boundary at all, and in the second neither package declares course geometry
+    for the other to measure, so the extent is 0.0.
+    """
+    if not boundary_valleys:
+        return
+    replaced = {str(_as_mapping(_it)["face_id"])
+                for _it in confirmed_selection.get("replaced_facets", ())}
+    if not replaced:
+        return
+    for vid in sorted(boundary_valleys, key=_id_sort_key):
+        faces = [str(f) for f in valley_pairs.get(str(vid), ())]
+        if len(faces) < 2:
+            continue
+        total_lf = float(geom.valley_lengths.get(str(vid), 0.0))
+        if total_lf <= 0:
+            continue
+        for flat_face in faces:
+            if flat_face not in replaced:
+                continue                      # the flat side must be the one being replaced
+            for coursed_face in faces:
+                if coursed_face == flat_face:
+                    continue
+                # THE v72 RULE, STATED HERE RATHER THAN RELIED ON DOWNSTREAM. A band on a facet that is
+                # itself fully replaced lies inside a slope already 100% scoped, so it contributes nothing.
+                # The band loop below would skip it anyway — but then this generator's output would not mean
+                # "bands that get carved", and a reader (or a gate) could not tell the two apart. Stating it
+                # here makes the yielded set the BILLED set.
+                #
+                # A VALLEY-THREADED FACET IS DELIBERATELY *NOT* FILTERED HERE, because that case is a UNION
+                # and not a drop: a facet with its own valley repair has the band folded into that zone by
+                # the loop below, and its area is still billed. Filtering it here would silently lose it.
+                if coursed_face in replaced:
+                    continue
+                extent = float(system_boundary_tie_in_ft(
+                    system_for_facet(flat_face, confirmed_selection),
+                    system_for_facet(coursed_face, confirmed_selection), shake_measurements))
+                if extent > 0:
+                    yield str(vid), coursed_face, total_lf, extent
+
+
+def _system_boundary_edges(geom: EagleViewGeometry, face_id: str, valley_ids: Sequence[str],
+                           boundary_valleys: frozenset, valley_pairs: Mapping[str, Sequence[str]],
+                           confirmed_selection, shake_measurements=None) -> Tuple[Edge, ...]:
+    """THE ONE site that builds SYSTEM_BOUNDARY edges (FRAME v106.3b). Every boundary edge anywhere in a
+    claim comes from here, so there is no second place that decides what a boundary is or how far it reaches.
+
+    REPLACEMENT ONLY, and that is JOSEPH'S RULING of 2026-11-04, in his own words:
+
+    > *"Even if the whole valley or boundary area is affected, if one side of the boundary is marked as a flat
+    >  surface, but isn't being replaced, then the flat surface tie-in would still remain untouched. The flat
+    >  surface system has to be being replaced in order to trigger replacing the tie-in."*
+
+    So a REPAIR of the flat facet produces no boundary edge, however much of the boundary its zone covers.
+    The reason is physical: the tie-in is part of INSTALLING the membrane. You only run new membrane up the
+    slope and under the courses when you are laying new membrane; a patch repair does not lift the shake
+    courses, and the membrane already under them stays — which is the same thing `METAL_MEMBRANE` has always
+    encoded ("it IS the flashing and the underlayment"), and the same reason wood shake's
+    `transition_emits_underlayment` is literally `metal != METAL_MEMBRANE`.
+
+    **THE TEST LIVES HERE, NOT AT THE CALL SITES.** The three callers pass the valley ids their own component
+    brought into scope — and they still do, because that part is also right: a repair at one valley does not
+    disturb a boundary at the other end of a facet, and a replacement takes the whole perimeter (its caller
+    passes `_facet_valley_ids`, exactly as the valley claim two lines above it does). But *whether the facet
+    is being replaced at all* is one rule, and a rule enforced by call-site discipline is a rule a fourth
+    caller gets wrong. QA built it the other way first and Joseph caught it: a MODBIT valley repair billed a
+    0.0631 SQ tie-in that no one is installing.
+
+    WHY IT CANNOT LIVE IN module1_m2interface, where the other edges are surfaced: that function receives
+    `engine_face.edges` as (a, b, edge_type, total_LF) tuples with NO LINE IDENTITY. It can tell that an edge
+    is a valley but never WHICH valley, and a system boundary is identified by line id. Only the assembly has
+    the line ids, the boundary set and the registry together — so it builds these and passes them in.
+
+    NOT DEDUPED, and that is the ruling rather than an oversight. Both facets of a boundary get an edge for
+    it, because Joseph's ruling of 2026-11-01 is that each side applies its OWN standard termination and FRAME
+    bills both. The two edges carry DIFFERENT `tie_in_extent_ft` — each side asks for its own — and on Yager
+    the shake side's is 0.0, because a membrane declares no course geometry for shake to run under. Deduping
+    them would be the pairwise thinking the ruling rejects.
+    """
+    if not boundary_valleys:
+        return ()
+    # JOSEPH'S RULING, 2026-11-04 — the one test, in the one place. `replaced_facets` is read the same way
+    # the mutual-exclusion rule and `_replacement_edge_contributions` read it, so "being replaced" means
+    # exactly what it means everywhere else in this file.
+    if str(face_id) not in {str(_as_mapping(_it)["face_id"])
+                            for _it in confirmed_selection.get("replaced_facets", ())}:
+        return ()
+    out: List[Edge] = []
+    this_system = system_for_facet(face_id, confirmed_selection)
+    for vid in valley_ids:
+        vid = str(vid)
+        if vid not in boundary_valleys:
+            continue
+        # `valley_pairs` is the map built ONCE at the top of assemble_full_roof_scope from
+        # emit_valley_candidates' bordering_roof_face_ids — THE valley facet-pair source (v93). The boundary
+        # set was derived from the same map, so a second walk here would be a second source for one fact,
+        # which is the shape entry 124 was written about.
+        others = [f for f in valley_pairs.get(vid, ()) if str(f) != str(face_id)]
+        if not others:
+            continue
+        other_system = system_for_facet(str(others[0]), confirmed_selection)
+        total_lf = float(geom.valley_lengths.get(vid, 0.0))
+        if total_lf <= 0:
+            continue
+        # CONTACT EQUALS THE TOTAL, AND THAT IS A FACT OF THE THREE PATHS THAT REACH HERE, NOT AN ASSUMPTION.
+        # Every one of them claims a WHOLE valley: a valley repair's zone is built from the valley event and
+        # runs the full length of the line (measured: L30 1.72 LF -> 27.0 SF, L45 10.13 LF -> 101.2 SF, both
+        # spanning the whole valley), a multi-valley repair is the same per valley, and a replacement takes
+        # the facet's entire perimeter. There is no selection anywhere in the program for part of a valley.
+        #
+        # SO IT IS WRITTEN AS contact, AND THE ENGINE STILL APPLIES THE 95% CONTINUOUS-RUN RULE TO IT. The
+        # pair is deliberately redundant TODAY, because a full-run quantity that is safe while every path
+        # claims the whole run becomes an over-bill the moment a partial path exists — the same shape as
+        # entry 124, where a dedupe that was safe at one answer became a decision at two. If a partial-valley
+        # selection is ever added, the engine bills the part and the gate's invariant check fires, instead of
+        # this quietly billing a whole boundary for a few feet of work.
+        contact_lf = total_lf
+        out.append(Edge(SYSTEM_BOUNDARY, contact_lf, total_lf,
+                        boundary_system_id=str(other_system),
+                        tie_in_extent_ft=float(system_boundary_tie_in_ft(this_system, other_system,
+                                                                         shake_measurements))))
+    return tuple(out)
+
+
+def _claim_valley_lf_once(geom: EagleViewGeometry, valley_id: str, selected_valley_ids: Sequence[str],
+                          claimed: set[str], boundary_valleys: frozenset = frozenset()) -> float:
+    # FRAME v106.4: a SYSTEM BOUNDARY valley is claimed by neither side — see _system_boundary_valley_ids.
+    # It is deliberately NOT added to `claimed`: it is not billed as a valley, so it casts no valley
+    # operation vote either.
+    if valley_id in boundary_valleys:
+        return 0.0
     if valley_id not in selected_valley_ids or valley_id in claimed:
         return 0.0
     claimed.add(valley_id)

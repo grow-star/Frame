@@ -12,9 +12,12 @@ const ENGINE_FILES = [
   "core/roof_selection/confirmation_builder.py",
   "core/geometry/eagleview_geometry_parser.py",
   "core/geometry/facet_basis.py",
+  "appurtenance_types.py",                  // FRAME v106.6g: the appurtenance TYPE table (flashing method + standard base). Loaded BEFORE roof_systems and geometry_core, which both import it; depends on nothing itself
   "core/registry/roof_systems.py",          // FRAME v95: core's roof-system registry (geometry_core looks packages up here)
   "geometry_core.py",
   "roof_systems/wood_shake/wood_shake_geometry.py",   // FRAME v95: the wood-shake profile + valley strategy; registers at import
+  "roof_systems/modbit/modbit_geometry.py",           // FRAME v106.4: the MODBIT profile + its valley REFUSAL; registers at import
+  "roof_systems/modbit/modbit_scope_expansion.py",    // FRAME v106.4: MODBIT's scope engine (one field SQ line); asked for, never imported by core
   "module1_m2interface.py",
   "core/roof_selection/module1_selected_valley_handoff.py",
   "module1_service.py",
@@ -34,6 +37,8 @@ const ENGINE_FILES = [
   "shared_category_registry.py",
   "roof_systems/wood_shake/wood_shake_categories.py",   // FRAME v97: the category ids wood_shake OWNS; imported by the boot helper
   "roof_systems/wood_shake/wood_shake_content.py",    // FRAME v101: the package's words (labels, carrier vocabulary, repair entries, report text); imported by wood_shake_categories
+  "roof_systems/modbit/modbit_categories.py",         // FRAME v106.4: the category ids modbit OWNS; imported by the boot helper
+  "roof_systems/modbit/modbit_content.py",            // FRAME v106.4: modbit's words (label + carrier vocabulary; it declares NO report text — see its docstring); imported by modbit_categories
   "core/registry/package_content.py",                  // FRAME v101: core reads a package's words here, at call time (never imports the package)
   "module3_keying.py",
   "operation_dimension.py",
@@ -56,6 +61,7 @@ const ENGINE_FILES = [
   "core/reporting/report_diagram_svg.py",
   // Layer A: raw carrier-estimate text -> structured header + line items (page 3 prefill).
   "carrier_layer_a.py",
+  "appurtenance_review.py",
   "XML.txt",
 ];
 
@@ -93,6 +99,13 @@ from dataclasses import asdict, is_dataclass
 # FRAME v97 BRIDGE 3: the app loads its roof-system packages ONCE, here, before any page's Python runs.
 # Every page (1-4) boots through this helper. A package added later is its files + one line here.
 import wood_shake_categories
+# FRAME v106.4: the second package, by that same rule. Its categories module imports its content module, so
+# this one line loads the label and the carrier vocabulary on every page, exactly as wood_shake's does. The
+# GEOMETRY modules of both packages are imported by module1_service, not here.
+import modbit_categories
+# FRAME v106.6g2 / B2: the shared appurtenance-review authority, imported once here so
+# every page's Python can reach it, by the same rule as the package category modules.
+import appurtenance_review
 
 
 def _wb_to_plain(obj):
@@ -207,9 +220,15 @@ export async function workbenchUpdate(xmlText, uiSelection = {}) {
 import json
 from workbench_seam import build_scope_from_ui_selection
 from workbench_diagram_data import build_diagram_data
+from appurtenance_review import review_report
 ui_selection = json.loads(ui_selection_json)
 scope = build_scope_from_ui_selection(xml_text, ui_selection)
 diagram = build_diagram_data(xml_text, ui_selection)
+# FRAME v106.6g2 / B2 - the item-specific size/label review, from the ONE shared authority. It is
+# RECOMPUTED here from the current xml and selection on every update, never read from a stored flag,
+# so a page that has gone stale cannot report "nothing pending". The whole selection is handed over,
+# bare, exactly as the two calls above receive it.
+review = review_report(xml_text, ui_selection)
 # ONE SERIALISER, USED EVERYWHERE. This function used to hand-build a SECOND, divergent scope dict
 # with only three keys - so ridge_contacts (which _wb_scope_summary builds correctly) never reached
 # the UI, every ridge read a contact of 0, and the "this ridge is not in the repair" guard fired on
@@ -223,6 +242,7 @@ diagram = build_diagram_data(xml_text, ui_selection)
 json.dumps({
     "scope": _wb_scope_summary(scope),
     "diagram": diagram,
+    "reviews": review.as_dict(),
 })
 `, { xml_text: xmlText, ui_selection_json: JSON.stringify(uiSelection || {}) });
 }
@@ -325,6 +345,7 @@ from workbench_roof_layout import build_roof_layout
 from workbench_diagram_data import build_diagram_data
 from report_diagram_svg import build_report_diagram_svg
 from module3_report_renderer import to_html
+from appurtenance_review import export_review_gate, clear_resolved_questions
 
 ui_selection = json.loads(ui_selection_json)
 rows = json.loads(rows_json)
@@ -335,74 +356,104 @@ attachments = opts.get("attachments") or []
 reference_tags = opts.get("reference_tags") or ["CSSB", "IRC R905.8"]
 claim_name = opts.get("claim_name") or "Wood Shake Repair"
 
-module2_result = build_scope_from_ui_selection(xml_text, ui_selection)
-module1_result = {"affected_SF": module2_result.affected_SF_raw_total}
+# FRAME v106.6g2 / B2 - THE EXPORT BACKSTOP, FIRST, BEFORE ANYTHING IS BUILT. The reviews are
+# RECOMPUTED from this xml and this selection: not read from a flag page 2 set, not inferred from
+# whether a citation happens to contain a warning. So a claim reached straight from stored session
+# data, a bypassed Continue handler, an old snapshot or a tampered confirmation all arrive here and
+# are all refused the same way. Nothing is rendered on the blocked path - there is no projection, no
+# html, and therefore nothing to print or download, never a partial report.
+_review = export_review_gate(xml_text, ui_selection)
+if _review.get("blocked"):
+    _result = {
+        "mode": None, "status": None, "gated": True, "exported": False,
+        "blocked": True, "blocked_reason": "APPURTENANCE_REVIEW_UNRESOLVED",
+        "review": _review,
+        "unresolved_ids": _review.get("unresolved_ids") or [],
+        "unresolved_reasons": [i.get("reason_text") for i in (_review.get("unresolved") or [])],
+        "html": "", "lines": [], "language_gate_hard": [],
+        "sections": [], "carrier_parser_status": None,
+        "duplicate_comparison_categories": [],
+    }
+else:
+    module2_result = build_scope_from_ui_selection(xml_text, ui_selection)
+    # Every relevant item is explicitly confirmed or corrected, so the internal question has been
+    # ANSWERED and must not appear in a document a carrier reads. Presentation only: citations lose
+    # that one clause; quantities, categories, units and the CONFIRM tier are untouched.
+    _cleared = clear_resolved_questions(module2_result)
+    module1_result = {"affected_SF": module2_result.affected_SF_raw_total}
 
-# v87: an estimate with carrier lines but ZERO in-scope ROOF lines is still a COMPARISON — every
-# required item reads as missing — not a degrade to REQUIRED_SCOPE_ONLY. page 4 passes
-# comparison_intended from page 3's mode (the single authority). With no in-scope rows,
-# build_carrier_summary_from_manual_entry([]) yields a present-but-empty summary, which
-# build_scope_comparison turns into the all-missing comparison. With no estimate at all (repair-scope),
-# comparison_intended is false -> carrier_summary stays None -> REQUIRED_SCOPE_ONLY, unchanged.
-carrier_summary = (build_carrier_summary_from_manual_entry(rows)
-                   if (rows or opts.get("comparison_intended")) else None)
+    # v87: an estimate with carrier lines but ZERO in-scope ROOF lines is still a COMPARISON — every
+    # required item reads as missing — not a degrade to REQUIRED_SCOPE_ONLY. page 4 passes
+    # comparison_intended from page 3's mode (the single authority). With no in-scope rows,
+    # build_carrier_summary_from_manual_entry([]) yields a present-but-empty summary, which
+    # build_scope_comparison turns into the all-missing comparison. With no estimate at all (repair-scope),
+    # comparison_intended is false -> carrier_summary stays None -> REQUIRED_SCOPE_ONLY, unchanged.
+    carrier_summary = (build_carrier_summary_from_manual_entry(rows)
+                       if (rows or opts.get("comparison_intended")) else None)
 
-comparison = build_scope_comparison(module2_result, carrier_summary)
-argument = build_scope_argument(module1_result, module2_result, comparison, carrier_summary, vci,
-                                photos=photos, attachments=attachments,
-                                reference_tags=reference_tags)["argument_pack"]
-# The report's picture AND its percentage come from the SAME layout + diagram data the page-2 totals
-# come from — never re-derived, never a placeholder. Failure to draw must not cost the report.
-_diagram = None
-_svg = ""
-try:
-    _layout = build_roof_layout(xml_text)
-    _diagram = build_diagram_data(xml_text, ui_selection)
-    _svg = build_report_diagram_svg(_layout, _diagram)
-except Exception:
+    comparison = build_scope_comparison(module2_result, carrier_summary)
+    argument = build_scope_argument(module1_result, module2_result, comparison, carrier_summary, vci,
+                                    photos=photos, attachments=attachments,
+                                    reference_tags=reference_tags)["argument_pack"]
+    # The report's picture AND its percentage come from the SAME layout + diagram data the page-2 totals
+    # come from — never re-derived, never a placeholder. Failure to draw must not cost the report.
     _diagram = None
     _svg = ""
-_pct = ((_diagram or {}).get("summary") or {}).get("pct_of_roof")
+    try:
+        _layout = build_roof_layout(xml_text)
+        _diagram = build_diagram_data(xml_text, ui_selection)
+        _svg = build_report_diagram_svg(_layout, _diagram)
+    except Exception:
+        _diagram = None
+        _svg = ""
+    _pct = ((_diagram or {}).get("summary") or {}).get("pct_of_roof")
 
-projection = build_module3_inputs(module1_result, module2_result, comparison, argument, vci,
-                                  carrier_summary, photos=photos, attachments=attachments,
-                                  reference_tags=reference_tags, diagram_pct=_pct)
-if _svg:
-    projection["inputs"]["P3"]["diagram_svg"] = _svg
+    projection = build_module3_inputs(module1_result, module2_result, comparison, argument, vci,
+                                      carrier_summary, photos=photos, attachments=attachments,
+                                      reference_tags=reference_tags, diagram_pct=_pct)
+    if _svg:
+        projection["inputs"]["P3"]["diagram_svg"] = _svg
 
-rendered = render_module3_report(projection)
-mode = projection["sc"]["mode"]
+    rendered = render_module3_report(projection)
+    mode = projection["sc"]["mode"]
 
-# The measured shake profile drives §3's shake-count derivation (per-shake coverage + shakes/SQ).
-# It rides along in the ui_selection the scope was built from — the SAME measurements Module 2 used —
-# so the derivation is never on the defaults. Presentation only; no computed value depends on it.
-shake_measurements = ui_selection.get("shake_measurements") or ui_selection.get("shake_profile") or {}
-# Per-device branding (base64 logo + typed attribution), read from localStorage above. Presentation only.
-logo_data_uri = brand_logo or None
-prepared_by = brand_prepared_by or None
+    # The measured shake profile drives §3's shake-count derivation (per-shake coverage + shakes/SQ).
+    # It rides along in the ui_selection the scope was built from — the SAME measurements Module 2 used —
+    # so the derivation is never on the defaults. Presentation only; no computed value depends on it.
+    shake_measurements = ui_selection.get("shake_measurements") or ui_selection.get("shake_profile") or {}
+    # Per-device branding (base64 logo + typed attribution), read from localStorage above. Presentation only.
+    logo_data_uri = brand_logo or None
+    prepared_by = brand_prepared_by or None
 
-# The §10.5 language guard governs export — we call it, never bypass or duplicate it.
-export = safe_export(projection["inputs"]["P3"],
-                     render_fn=lambda: to_html(rendered, mode, claim_name,
-                                               {"kind": "PRODUCTION", "detail": "live claim"},
-                                               logo_data_uri=logo_data_uri,
-                                               prepared_by=prepared_by,
-                                               shake_measurements=shake_measurements))
+    # The §10.5 language guard governs export — we call it, never bypass or duplicate it.
+    export = safe_export(projection["inputs"]["P3"],
+                         review=_review,
+                         render_fn=lambda: to_html(rendered, mode, claim_name,
+                                                   {"kind": "PRODUCTION", "detail": "live claim"},
+                                                   logo_data_uri=logo_data_uri,
+                                                   prepared_by=prepared_by,
+                                                   shake_measurements=shake_measurements))
 
-lines = ((comparison.get("scope_comparison") or {}).get("lines")) or []
-out = {
-    "mode": mode,
-    "status": comparison["status"],
-    "carrier_parser_status": (carrier_summary or {}).get("parser_status"),
-    "duplicate_comparison_categories": list((carrier_summary or {}).get("duplicate_comparison_categories", []) or []),
-    "gated": bool(rendered.get("gated")),
-    "sections": sorted(rendered.get("sections") or []),
-    "exported": bool(export["exported"]),
-    "language_gate_hard": list(export["gate"]["hard"]),
-    "html": export["artifact"] if export["exported"] else "",
-    "lines": _wb_to_plain(lines),
-}
-json.dumps(out)
+    lines = ((comparison.get("scope_comparison") or {}).get("lines")) or []
+    out = {
+        "mode": mode,
+        "status": comparison["status"],
+        "carrier_parser_status": (carrier_summary or {}).get("parser_status"),
+        "duplicate_comparison_categories": list((carrier_summary or {}).get("duplicate_comparison_categories", []) or []),
+        "gated": bool(rendered.get("gated")),
+        "sections": sorted(rendered.get("sections") or []),
+        "exported": bool(export["exported"]),
+        "language_gate_hard": list(export["gate"]["hard"]),
+        "html": export["artifact"] if export["exported"] else "",
+        "lines": _wb_to_plain(lines),
+        "blocked": False,
+        "review": _review,
+        "review_questions_cleared": _cleared,
+    }
+    _result = out
+# ONE trailing expression, in both paths: Pyodide's runPythonAsync returns the last expression's
+# value and runJson JSON.parses it, so a module that ends on a statement returns None.
+json.dumps(_result)
 `, {
     xml_text: xmlText,
     ui_selection_json: JSON.stringify(uiSelection || {}),
@@ -457,9 +508,33 @@ json.dumps(mixed_operation_categories(rows))
 `, { rows: rows || [] });
 }
 
+// FRAME v105.5: which roof systems (coverings) are installed — the ONE place page 2 learns the list, so no
+// JavaScript ever names a covering. Asks roof_systems.registered() after importing the engine path page 2
+// computes through (workbench_seam), so exactly the packages that path registers are listed. Each row takes
+// its package's own display label for its field covering where it declares one, else the bare id.
+// -> [{system_id, label}], sorted by system_id. With one package installed: exactly one row.
+export async function registeredRoofSystems() {
+  return runJson(`
+import json
+import workbench_seam  # noqa: F401 — page 2's engine path; importing it registers the installed roof systems
+import roof_systems as _RS
+import shared_category_registry as _R
+import package_content as _PC
+_labels = _PC.display_labels()
+_rows = []
+for _sid in sorted(_RS.registered()):
+    try:
+        _label = _labels.get(_R.field_category_id(_sid)) or _sid
+    except Exception:
+        _label = _sid
+    _rows.append({"system_id": _sid, "label": str(_label)})
+json.dumps(_rows)
+`, {});
+}
+
 globalThis.WoodShakePyodideBridge = {
   ready, bundledXmlText, roofLayout, scopeFromSelection, diagramData,
   workbenchUpdate, yagerUiSelection, yagerScope,
   requiredScope, buildCarrierSummary, buildScopeComparison, buildModule3Report, transitionStates,
-  parseCarrierEstimate,
+  parseCarrierEstimate, registeredRoofSystems,
 };

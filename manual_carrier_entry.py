@@ -14,7 +14,7 @@ import re
 from typing import Any, Iterable, Mapping, Optional
 
 from shared_category_registry import REGISTRY_28, REGISTRY_SET, REGISTRY_HASH, registry_fingerprint
-from shared_category_registry import field_category_id, sole_category_package   # FRAME v104c: line-less (bridge 4, narrowed)
+from shared_category_registry import field_category_ids   # FRAME v106.4: bridge 4 RETIRED — membership, no package picked
 # ONE AUTHORITY for the Remove/Replace rule. consolidate_RR already encodes "keep the Replace/Install
 # side, the Remove side is the same material coming off, Replace >= Remove is expected not a mismatch."
 # The live path imports and USES it rather than re-implementing it — two copies drifting apart is how
@@ -483,8 +483,15 @@ def build_carrier_summary_from_manual_entry(
     then confirmed by the user. This function performs validation and contract
     shaping only; it does not parse documents or infer scope.
     """
-    # FRAME v104c: LINE-LESS (bridge 4, narrowed) — carrier rows, which have no roof system; no line says which system.
-    _fid = field_category_id(sole_category_package("manual_carrier_entry.build_carrier_summary_from_manual_entry: carrier rows, which have no roof system"))
+    # FRAME v106.4: BRIDGE 4 RETIRED HERE — membership, no package picked. The ONE question this resolution
+    # answers is at the single use site below: "did the carrier approve a FIELD-COVERING line?" A carrier row
+    # genuinely has no roof system, so asking WHICH package's field covering was always the wrong question;
+    # the right one is whether the approved rows contain ANY registered system's field covering. That needs
+    # no package and is correct at any count. Exactly the retirement v104e made at the four comparison sites
+    # ("is this category a field covering?" needs no package), and it is why `sole_category_package` is no
+    # longer imported here. (Was v104c: field_category_id(sole_category_package(...)), which raised the
+    # moment a second package registered — measured on five gates.)
+    _field_ids = frozenset(field_category_ids())
     if manual_rows is None:
         raise ValueError("manual_rows must be an iterable of row dictionaries")
 
@@ -600,7 +607,11 @@ def build_carrier_summary_from_manual_entry(
         "unmapped_lines": collections["unmapped_lines"],
         "out_of_scope_lines": collections["out_of_scope_lines"],
         "flags": flags,
-        "acknowledged": {"wood_shake_repair": _fid in approved},
+        # The KEY NAME is a frozen contract key read downstream, so it keeps its wording; what it means is
+        # "the carrier acknowledged a field-covering repair", and on a mixed roof that is true if ANY
+        # registered system's field covering was approved. Logged: the name is now material-specific while
+        # the test is not — a rename is a contract change, not this build's.
+        "acknowledged": {"wood_shake_repair": any(f in approved for f in _field_ids)},
         # v72 DEFECT 2 (no-haul-off): stated §5 gaps derived from the carrier's own lines (not required
         # lines). Empty when none apply, so existing reports are unchanged.
         "stated_gaps": [g for g in (_no_haul_off_gap(
