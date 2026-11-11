@@ -60,12 +60,30 @@ FacetGrid = namedtuple("FacetGrid", "gx gy X Y")
 # FRAME v104b: `expand_scope` — the package's scope engine — is a REQUIRED registration field. The engine is ASKED FOR
 # (get(system_id).expand_scope), never imported by name: that retires bridge 6 ("the scope engine is called, not
 # dispatched"). With one package registered, dispatch resolves to the very same function the imports reached.
+# FRAME ARC-05a — PACKAGE OPERATIONS. Named, package-owned operations that core may ASK a registered package for,
+# beyond the scope engine. A CLOSED vocabulary (as EVENT_TYPES is): core can only ask for an operation it names here,
+# and a package can only declare one of these names, so neither side can invent a hook the other does not know.
+#   field_piece_count(affected_SF, repair_factor, measured_profile) -> int
+#       how many PIECES of the field covering an affected area takes, from the measured profile — the diagram's
+#       per-event count (workbench_diagram_data). Only a covering billed by the piece can answer it; a membrane
+#       declines by omission, so core gets a named refusal, never a fabricated count.
+#   roof_eave_ice_and_water(eave_LF, soffit_depth_in, basis) -> (coverage_SF, layers, defaulted, citation)
+#       the ROOF-LEVEL eave ice & water line (module2_assembly): coverage, layer count, whether the soffit was
+#       defaulted, and the citation for the asserted basis.
+# Until ARC-05a both were reached by DIRECT imports of the wood-shake package from shared modules
+# (package_isolation_gate exceptions E3 and E2). Now they are declared at registration and dispatched.
+OPERATION_TYPES = frozenset(("field_piece_count", "roof_eave_ice_and_water"))
+
 RoofSystem = namedtuple("RoofSystem", "system_id resolve_profile disturbance claims_unlabelled_profiles expand_scope "
                                        "course_top_ft tie_in_courses appurtenance_clearance_in "
-                                       "appurtenance_base_clearance_in",
-                        defaults=(None, None, None, None))  # FRAME v105.4: course_top_ft OPTIONAL; v106.3b:
-                                                       # tie_in_courses; v106.6c: appurtenance_clearance_in;
-                                                       # v106.6g: appurtenance_base_clearance_in
+                                       "appurtenance_base_clearance_in profile_settings profile_presets "
+                                       "refused_events operations",
+                        defaults=(None, None, None, None, None, None, frozenset(), MappingProxyType({})))
+                                                       # FRAME v105.4: course_top_ft OPTIONAL;
+                                                       # v106.3b: tie_in_courses; v106.6c: appurtenance_clearance_in;
+                                                       # v106.6g: appurtenance_base_clearance_in;
+                                                       # ARC-03a: profile_settings + profile_presets (see register)
+                                                       # ARC-05a: refused_events + operations (see register)
 
 
 class RoofSystemRegistryError(LookupError):
@@ -79,7 +97,8 @@ _UNLABELLED_CLAIMANT = None
 
 def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_unlabelled_profiles=False,
              course_top_ft=None, tie_in_courses=None, appurtenance_clearance_in=None,
-             appurtenance_base_clearance_in=None):
+             appurtenance_base_clearance_in=None, profile_settings=None, profile_presets=None,
+             refused_events=None, operations=None):
     """Called BY a package, at its own import. Idempotent for an identical registration. A second, DIFFERENT
     registration of one id raises (one rule, one home), as does a second claimant of unlabelled profiles.
 
@@ -112,7 +131,33 @@ def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_un
     has no honest answer and declines by omission, exactly as a non-coursed covering declines course_top_ft.
     Asking a package that declined then RAISES, named, rather than falling back to anyone else's number — the
     same refusal `affected_area` already makes for a missing VALLEY strategy. It joins the idempotency
-    comparison."""
+    comparison.
+
+    FRAME ARC-03a: `profile_settings` is OPTIONAL — the settings a DECLARED material profile of this package must
+    carry, as {setting_name: {"nullable": bool, "choices": tuple | None}}. It exists so that a schema_version 1
+    project (core/contracts/project_config.py) can refuse a profile that omits a setting, instead of letting the
+    package's resolver fill the gap from its own defaults: a value the user never chose must not reach a new
+    project. "nullable" True means None is an explicit, user-chosen answer (MODBIT's unqualified application);
+    "choices" lists the accepted values where the package has a closed list (else None). Core holds no setting
+    name of its own: the names are the package's. A package that omits it cannot be assigned in a schema_version
+    1 project — the project validator says so, by name.
+
+    `profile_presets` is OPTIONAL — named, visibly labelled presets the user may SELECT, as
+    {preset_id: {"label": str, "settings": {...}}}. Each preset carries every declared setting and passes the
+    package's own resolver. A preset is offered, never injected: the project validator accepts a profile
+    labelled USER_SELECTED_PRESET only when it names a preset whose settings it carries exactly. Both join the
+    idempotency comparison.
+
+    FRAME ARC-05a: `refused_events` is OPTIONAL — the repair-event types whose `disturbance` entry is an EXPLICIT,
+    NAMED REFUSAL rather than a strategy (MODBIT's VALLEY today: modbit_geometry.valley_disturbance raises
+    NotImplementedError by design). Each must also be a key of `disturbance` — a refusal is still the package's own
+    callable, so a request reaches the package and the package says no — and declaring it is what stops a
+    capability listing from counting a refusal as an implemented strategy (event_support / capabilities below).
+
+    `operations` is OPTIONAL — {name: callable} for the package-owned operations in OPERATION_TYPES (above) that
+    this package implements. An unknown name, or a non-callable, raises here. A package that omits an operation
+    DECLINES it: asking that package for it raises a named error (require_operation), never a default. Both join the
+    idempotency comparison (operations by identity, like expand_scope)."""
     global _UNLABELLED_CLAIMANT
     if not isinstance(system_id, str) or not system_id.strip():
         raise ValueError(f"system_id must be a non-empty string; got {system_id!r}")
@@ -138,6 +183,8 @@ def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_un
         raise TypeError(f"{system_id}: appurtenance_base_clearance_in must be a positive number of inches "
                         f"when declared (FRAME v106.6g), or omitted; got "
                         f"{appurtenance_base_clearance_in!r}")
+    profile_settings, profile_presets = _frozen_profile_declaration(system_id, resolve_profile,
+                                                                    profile_settings, profile_presets)
     if not isinstance(disturbance, Mapping) or not disturbance:
         raise TypeError(f"{system_id}: disturbance must be a non-empty mapping of event type -> strategy")
     unknown = sorted(set(disturbance) - EVENT_TYPES)
@@ -146,12 +193,27 @@ def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_un
     for ev, fn in disturbance.items():
         if not callable(fn):
             raise TypeError(f"{system_id}: disturbance[{ev!r}] must be callable")
+    # FRAME ARC-05a: declared refusals and package operations
+    refused = frozenset(refused_events or ())
+    stray = sorted(refused - set(disturbance))
+    if stray:
+        raise ValueError(f"{system_id}: refused_events {stray} are not keys of disturbance — a refusal is the "
+                         f"package's own callable that raises by name, so it must be registered as one (ARC-05a)")
+    ops = dict(operations or {})
+    unknown_ops = sorted(set(ops) - OPERATION_TYPES)
+    if unknown_ops:
+        raise ValueError(f"{system_id}: unknown package operation(s) {unknown_ops}; known: {sorted(OPERATION_TYPES)} "
+                         f"(ARC-05a)")
+    for name, fn in ops.items():
+        if not callable(fn):
+            raise TypeError(f"{system_id}: operations[{name!r}] must be callable (ARC-05a)")
     entry = RoofSystem(system_id, resolve_profile, MappingProxyType(dict(disturbance)),
                        bool(claims_unlabelled_profiles), expand_scope, course_top_ft,
                        None if tie_in_courses is None else int(tie_in_courses),
                        None if appurtenance_clearance_in is None else float(appurtenance_clearance_in),
                        None if appurtenance_base_clearance_in is None
-                       else float(appurtenance_base_clearance_in))
+                       else float(appurtenance_base_clearance_in),
+                       profile_settings, profile_presets, refused, MappingProxyType(ops))
     existing = _SYSTEMS.get(system_id)
     if existing is not None:
         if (existing.resolve_profile is entry.resolve_profile
@@ -161,7 +223,11 @@ def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_un
                 and existing.course_top_ft is entry.course_top_ft
                 and existing.tie_in_courses == entry.tie_in_courses
                 and existing.appurtenance_clearance_in == entry.appurtenance_clearance_in
-                and existing.appurtenance_base_clearance_in == entry.appurtenance_base_clearance_in):
+                and existing.appurtenance_base_clearance_in == entry.appurtenance_base_clearance_in
+                and existing.profile_settings == entry.profile_settings
+                and existing.profile_presets == entry.profile_presets
+                and existing.refused_events == entry.refused_events
+                and dict(existing.operations) == dict(entry.operations)):
             return existing
         raise RoofSystemRegistryError(
             f"roof system {system_id!r} is already registered with different strategies — two homes for one "
@@ -183,8 +249,75 @@ def register(system_id, *, resolve_profile, disturbance, expand_scope, claims_un
     return entry
 
 
+def _frozen_profile_declaration(system_id, resolve_profile, profile_settings, profile_presets):
+    """FRAME ARC-03a: validate a package's profile declaration and return it as plain, comparable tuples-of-pairs
+    (so the idempotency comparison is by value). Presets must carry exactly the declared settings and must pass the
+    package's own resolver — a preset the package itself would refuse is a wiring error at import, not at use."""
+    if profile_settings is None:
+        if profile_presets is not None:
+            raise TypeError(f"{system_id}: profile_presets needs profile_settings (ARC-03a)")
+        return None, None
+    if not isinstance(profile_settings, Mapping) or not profile_settings:
+        raise TypeError(f"{system_id}: profile_settings must be a non-empty mapping of setting -> spec (ARC-03a)")
+    settings = []
+    for name, spec in profile_settings.items():
+        if not isinstance(name, str) or not name.strip():
+            raise TypeError(f"{system_id}: profile_settings names must be non-empty strings; got {name!r}")
+        spec = dict(spec or {})
+        unknown = sorted(set(spec) - {"nullable", "choices"})
+        if unknown:
+            raise TypeError(f"{system_id}: profile_settings[{name!r}] has unknown spec key(s) {unknown}")
+        choices = spec.get("choices")
+        if choices is not None and (isinstance(choices, (str, bytes)) or not tuple(choices)):
+            raise TypeError(f"{system_id}: profile_settings[{name!r}].choices must be a non-empty sequence or None")
+        settings.append((name, (("nullable", bool(spec.get("nullable", False))),
+                                ("choices", None if choices is None else tuple(choices)))))
+    settings = tuple(sorted(settings))
+    presets = None
+    if profile_presets is not None:
+        if not isinstance(profile_presets, Mapping) or not profile_presets:
+            raise TypeError(f"{system_id}: profile_presets must be a non-empty mapping or omitted (ARC-03a)")
+        names = {n for n, _s in settings}
+        rows = []
+        for pid, preset in profile_presets.items():
+            preset = dict(preset or {})
+            label, values = preset.get("label"), dict(preset.get("settings") or {})
+            if not isinstance(pid, str) or not pid.strip() or not isinstance(label, str) or not label.strip():
+                raise TypeError(f"{system_id}: every preset needs a non-empty id and a visible label (ARC-03a)")
+            if set(values) != names:
+                raise TypeError(f"{system_id}: preset {pid!r} must carry exactly the declared settings {sorted(names)}; "
+                                f"got {sorted(values)}")
+            resolve_profile({**values, "system_id": system_id})   # the package's own validator, at import
+            rows.append((pid, (("label", label), ("settings", tuple(sorted(values.items()))))))
+        presets = tuple(sorted(rows))
+    return settings, presets
+
+
+def profile_declaration(system_id):
+    """FRAME ARC-03a: what a DECLARED profile of this system must carry, as plain dicts —
+    {"settings": {name: {"nullable", "choices"}}, "presets": {preset_id: {"label", "settings"}}} — or None when the
+    package declares no profile settings (it then cannot be assigned in a schema_version 1 project). Unknown id
+    raises through get()."""
+    entry = get(system_id)
+    if entry.profile_settings is None:
+        return None
+    settings = {n: {k: (list(v) if isinstance(v, tuple) else v) for k, v in spec} for n, spec in entry.profile_settings}
+    presets = {}
+    for pid, spec in (entry.profile_presets or ()):
+        d = dict(spec)
+        presets[pid] = {"label": d["label"], "settings": dict(d["settings"])}
+    return {"settings": settings, "presets": presets}
+
+
 def registered():
     return tuple(sorted(_SYSTEMS))
+
+
+def unlabelled_profile_owner():
+    """FRAME ARC-03a: the package that declared it owns unlabelled (pre-ProjectConfig) profiles, or None. Read ONLY
+    to name whose settings the transitional claim-level profile projection carries
+    (project_config.legacy_profile_projection); it never decides a facet's material in a schema_version 1 project."""
+    return _UNLABELLED_CLAIMANT
 
 
 def _none_registered():
@@ -335,6 +468,106 @@ def system_boundary_tie_in_ft(asking_system_id, other_system_id, profile) -> flo
     return float(course_top_ft(other_system_id, profile, n))
 
 
+# =============================================================================================
+# FRAME ARC-05a — WHAT A PACKAGE SUPPORTS, asked of the package's own registration. Tier 1: names no roof system.
+IMPLEMENTED = "IMPLEMENTED"     # the package registered a callable that computes an answer
+REFUSES = "REFUSES"             # the package registered a callable that raises BY NAME (declared in refused_events)
+NOT_DECLARED = "NOT_DECLARED"   # the package registered nothing for it
+
+
+class UnsupportedPackageOperation(RoofSystemRegistryError):
+    """A caller asked a registered package for an operation it does not declare. Never answered with a default."""
+
+
+def event_support(system_id, event_type):
+    """How `system_id` answers a repair-event type, from its own registration: IMPLEMENTED (a strategy), REFUSES (a
+    declared, named refusal — the callable exists and raises) or NOT_DECLARED. An unknown event type raises: it is not
+    a question core can ask. NOT_DECLARED for TRANSITION / APPURTENANCE / PENETRATION / FACET_REPLACEMENT today means
+    those paths are shared core paths, not package hooks — it is not a claim that the package cannot be repaired there."""
+    if event_type not in EVENT_TYPES:
+        raise ValueError(f"unknown repair-event type {event_type!r}; known: {sorted(EVENT_TYPES)}")
+    entry = get(system_id)
+    if event_type not in entry.disturbance:
+        return NOT_DECLARED
+    return REFUSES if event_type in entry.refused_events else IMPLEMENTED
+
+
+def declares_operation(system_id, name) -> bool:
+    """Does `system_id` declare package operation `name`? MEMBERSHIP: answers without raising (an unknown operation
+    name raises — it is not a question core can ask)."""
+    if name not in OPERATION_TYPES:
+        raise ValueError(f"unknown package operation {name!r}; known: {sorted(OPERATION_TYPES)} (ARC-05a)")
+    return name in get(system_id).operations
+
+
+def require_operation(system_id, name):
+    """The callable `system_id` registered for package operation `name`. RAISES UnsupportedPackageOperation, naming
+    the package and the operation, when the package declines it — core never substitutes another package's answer."""
+    if not declares_operation(system_id, name):
+        raise UnsupportedPackageOperation(
+            f"FRAME: roof system {system_id!r} does not declare the package operation {name!r} (it declares "
+            f"{sorted(get(system_id).operations) or 'none'}). Core has no answer of its own and will not borrow "
+            f"another package's. (ARC-05a)")
+    return get(system_id).operations[name]
+
+
+def operation_owner(name, context="a roof-level operation"):
+    """THE registered package that declares package operation `name` — for a ROOF-LEVEL caller with no facet or
+    profile in hand (module2_assembly's eave ice & water line; workbench_diagram_data's piece count).
+
+    ARC-05a preserves, and makes explicit, the ownership these operations had when they were direct imports: exactly
+    one installed package implements each, so exactly one package answers, and the answer is the same function the
+    import reached. It does NOT decide who owns such an operation on a roof carrying two coverings that BOTH implement
+    it — that is a mixed-roof ownership question for ARC-06, and until it is ruled this RAISES, naming every declarer,
+    rather than picking one. Zero declarers RAISES too: core has no answer of its own."""
+    if name not in OPERATION_TYPES:
+        raise ValueError(f"unknown package operation {name!r}; known: {sorted(OPERATION_TYPES)} (ARC-05a)")
+    if not _SYSTEMS:
+        raise _none_registered()
+    owners = [sid for sid in registered() if name in _SYSTEMS[sid].operations]
+    if len(owners) == 1:
+        return owners[0]
+    if not owners:
+        raise UnsupportedPackageOperation(
+            f"FRAME: {context} needs the package operation {name!r}, and no registered roof system declares it "
+            f"(registered: {list(registered())}). Core has no answer of its own. (ARC-05a)")
+    raise RegistryWiringError(
+        f"FRAME: {context} needs the package operation {name!r}, and {len(owners)} registered roof systems declare it "
+        f"({owners}). Which covering owns a roof-level operation on a mixed roof is not ruled (ARC-06); core will not "
+        f"pick one. (ARC-05a)")
+
+
+def capabilities(system_id):
+    """A DESCRIPTION of what `system_id` registered, read from its own declarations (never from a draft contract):
+    each repair-event type's support, the scope engine, the optional course / tie-in / clearance declarations, the
+    profile declaration, the package operations, and the category ids it owns in shared_category_registry. Read-only;
+    it computes nothing and is not consulted by any scope path. `repairability` and `unit_rules` are reported as
+    NOT_IMPLEMENTED: no package declares them and core has no API for them (ARC-05a census)."""
+    e = get(system_id)
+    from shared_category_registry import package_categories as _pc, field_category_id as _fc   # read at call time
+    try:
+        owns, field = tuple(_pc(system_id)), _fc(system_id)
+    except Exception as exc:                                      # categories not registered: say so, do not guess
+        owns, field = None, f"NOT_REGISTERED ({type(exc).__name__})"
+    return {
+        "system_id": e.system_id,
+        "events": {ev: event_support(system_id, ev) for ev in sorted(EVENT_TYPES)},
+        "expand_scope": IMPLEMENTED,
+        "resolve_profile": IMPLEMENTED,
+        "claims_unlabelled_profiles": bool(e.claims_unlabelled_profiles),
+        "course_top_ft": IMPLEMENTED if e.course_top_ft is not None else NOT_DECLARED,
+        "tie_in_courses": e.tie_in_courses,
+        "appurtenance_clearance_in": e.appurtenance_clearance_in,
+        "appurtenance_base_clearance_in": e.appurtenance_base_clearance_in,
+        "profile_declaration": profile_declaration(system_id),
+        "operations": {name: (IMPLEMENTED if name in e.operations else NOT_DECLARED) for name in sorted(OPERATION_TYPES)},
+        "owned_category_ids": owns,
+        "field_category_id": field,
+        "repairability": "NOT_IMPLEMENTED",
+        "unit_rules": "NOT_IMPLEMENTED",
+    }
+
+
 def system_for_profile(profile):
     """Which roof system owns this profile. A `system_id` on the profile decides it (unknown -> raise). A profile
     without one is resolved only through a package's explicit unlabelled-profile claim (bridge 1, above);
@@ -369,6 +602,13 @@ FACET_SYSTEMS_KEY = "facet_systems"
 # An exclusion is a scope fact, not a system fact: the user knows what the facet is NOT, need not name what
 # it IS, and no package has to exist for them to say so.
 EXCLUDED_FACETS_KEY = "excluded_facets"
+# FRAME ARC-03a — A SCHEMA_VERSION 1 PROJECT. The selection carries the project's declared configuration under this
+# key (core/contracts/project_config.py owns its schema and THE material resolver). When it is present it is the ONLY
+# material authority: predominant_system_id / facet_systems must be absent (two authorities are refused, never merged),
+# and neither the unlabelled-profile claimant nor registration order is consulted. Absent, the legacy keys above keep
+# their exact pre-ARC-03a meaning for historical fixtures and pre-ARC-03a session state (retirement: ARC-03a
+# Project_Config schema doc, "Transitional paths").
+PROJECT_CONFIG_KEY = "project_config"
 
 
 def excluded_facets(confirmed_selection) -> frozenset:
@@ -412,6 +652,8 @@ def system_for_facet(face_id, confirmed_selection):
          core never picks a system. This step is a BRIDGE 4 member (see the module docstring).
     A named system that no package registered raises. An exception naming the predominant system is a no-op."""
     sel = confirmed_selection or {}
+    if PROJECT_CONFIG_KEY in sel:
+        return _project_system_for_facet(face_id, sel)
     sid = _facet_exceptions(sel).get(str(face_id))
     if sid not in (None, ""):
         return _require_registered_system(sid, f"{FACET_SYSTEMS_KEY}[{str(face_id)!r}]")
@@ -441,6 +683,104 @@ def system_for_facet(face_id, confirmed_selection):
             f"covering {str(face_id)} is. Core will not assume the rest of a mixed roof. Fix: declare "
             f"{PREDOMINANT_SYSTEM_KEY} on the claim. (v106.4)")
     return sole_registered_system(f"system_for_facet({str(face_id)!r})")
+
+
+def _refuse_two_material_authorities(sel):
+    both = [k for k in (PREDOMINANT_SYSTEM_KEY, FACET_SYSTEMS_KEY) if k in sel]
+    if both:
+        raise RegistryWiringError(
+            f"FRAME ARC-03a: this selection carries a {PROJECT_CONFIG_KEY} AND the legacy key(s) {both}. A schema_version "
+            f"1 project has ONE material authority (its materials map); core will not merge or choose between two. "
+            f"Fix: remove {both} from the selection.")
+
+
+def _project_system_for_facet(face_id, sel):
+    """ARC-03a: a schema_version 1 project's facet resolves through THE one resolver, and only through it."""
+    _refuse_two_material_authorities(sel)
+    from project_config import resolve_facet_or_members   # imported at call time: project_config imports this module
+    return resolve_facet_or_members(face_id, sel[PROJECT_CONFIG_KEY])[1]
+
+
+# =============================================================================================
+# FRAME ARC-06a (B1) — THE GEOMETRY PROFILE OF A FACET. Tier 1: names no roof system.
+# =============================================================================================
+# The legacy-input bridge: the ONE read of a selection's claim-level profile (a historical/legacy selection carries it
+# under these keys; a schema_version 1 project's carry derives it — project_config.legacy_profile_projection). Moved
+# here from module2_assembly in ARC-06a so the shared transition-contact reading uses the same read (it is the same
+# function, called by name from module2_assembly._shake_measurements_from_selection).
+LEGACY_CLAIM_PROFILE_KEYS = ("shake_measurements", "shake_profile")
+
+
+def claim_geometry_profile(confirmed_selection):
+    """The claim-level profile, resolved by ITS OWN package (system_for_profile: a labelled profile names it, an
+    unlabelled one belongs to the declared claimant). Identical to the pre-ARC-06a module2_assembly read."""
+    sel = confirmed_selection or {}
+    raw = None
+    for k in LEGACY_CLAIM_PROFILE_KEYS:
+        raw = sel.get(k)
+        if raw:
+            break
+    raw = raw or {}
+    return system_for_profile(raw).resolve_profile(raw)
+
+
+def _own_empty_profile(sid):
+    """The package `sid`'s OWN resolution of an empty declaration ("no settings given"). Core supplies no value and
+    no label; the result must carry the package's own id, or the package has broken the resolve_profile contract."""
+    prof = dict(get(sid).resolve_profile({}))
+    if prof.get("system_id") != sid:
+        raise RegistryWiringError(
+            f"roof system {sid!r} resolved an empty declaration to a profile labelled {prof.get('system_id')!r}; "
+            f"a package's resolve_profile must label its own profile")
+    return prof
+
+
+def geometry_profile_for_facet(face_id, confirmed_selection, claim_profile):
+    """The resolved profile the GEOMETRY of this facet's repair events must run with — the facet's OWN package and
+    profile, resolved through THE facet authority (system_for_facet; for a schema_version 1 project, project_config's
+    one resolver), never the claim's.
+
+    Until ARC-06a every geometry call received the CLAIM-LEVEL profile (confirmed_selection["shake_measurements"]),
+    so affected_area looked the package up from THAT profile and a facet declared MODBIT ran wood shake's valley fan
+    (B1). This is the per-facet answer:
+      * a schema_version 1 project -> ALWAYS the facet's declared profile, validated by its own package
+        (project_config.resolve_facet_or_members — precedence by_facet > by_structure > default, never a default
+        package), whatever the claim-level projection holds;
+      * a legacy selection whose facet system EQUALS the claim profile's system -> the claim profile, UNCHANGED (one
+        package, one profile: every protected single-system number is the same call it always was);
+      * a legacy selection (predominant_system_id / facet_systems, no profile for that package) -> the facet's
+        package resolves an EMPTY declaration with its OWN resolver (the package's declared behaviour for "no
+        settings given"; core supplies no value).
+    A facet with no resolvable system raises exactly as system_for_facet does."""
+    sel = confirmed_selection or {}
+    if PROJECT_CONFIG_KEY in sel:
+        # a schema_version 1 project: ALWAYS the facet's own declared profile, from THE resolver (two profiles of the
+        # same material on two facets each govern their own facet's geometry)
+        from project_config import resolve_facet_or_members   # call time: project_config imports this module
+        return dict(resolve_facet_or_members(face_id, sel[PROJECT_CONFIG_KEY])[2])
+    sid = system_for_facet(face_id, sel)
+    claim_sid = None
+    if isinstance(claim_profile, Mapping):
+        claim_sid = claim_profile.get("system_id")
+    if claim_sid == sid:
+        return claim_profile
+    return _own_empty_profile(sid)
+
+
+def geometry_profile_for_facets(face_ids, confirmed_selection, claim_profile, context="a geometry union across facets"):
+    """geometry_profile_for_facet for a union that spans SEVERAL facets (a notch merge): the members must carry ONE
+    roof system (system_for_facets raises RegistryWiringError, naming each facet and its system, on a system
+    boundary) and — in a project — one profile (project_config refuses members on different profiles). A union
+    across materials is never computed with either side's geometry."""
+    ids = [str(f) for f in face_ids]
+    sid = system_for_facets(ids, confirmed_selection, context)
+    sel = confirmed_selection or {}
+    if PROJECT_CONFIG_KEY in sel:
+        from project_config import resolve_facet_or_members, MEMBER_JOIN
+        return dict(resolve_facet_or_members(MEMBER_JOIN.join(ids), sel[PROJECT_CONFIG_KEY])[2])
+    if isinstance(claim_profile, Mapping) and claim_profile.get("system_id") == sid:
+        return claim_profile
+    return _own_empty_profile(sid)
 
 
 def appurtenance_clearance_for_facet(face_id, confirmed_selection) -> float:
@@ -536,6 +876,8 @@ def validate_roof_system_selection(confirmed_selection, roof_face_ids):
     not inspected at all (every pre-v104a claim). `roof_face_ids` are this roof's facets (ROOF faces, not
     penetrations): an exception keyed by anything else raises."""
     sel = confirmed_selection or {}
+    if PROJECT_CONFIG_KEY in sel:
+        _refuse_two_material_authorities(sel)
     if (PREDOMINANT_SYSTEM_KEY not in sel and FACET_SYSTEMS_KEY not in sel
             and EXCLUDED_FACETS_KEY not in sel):
         return None
@@ -571,16 +913,20 @@ def validate_roof_system_selection(confirmed_selection, roof_face_ids):
 
 
 def roof_system_keys(selection):
-    """The three keys exactly as the selection gives them (a mapping or sequence is COPIED), for the code that
+    """The selection's roof-system keys exactly as given (a mapping or sequence is COPIED; ARC-03a adds the
+    project_config header, deep-copied), for the code that
     CARRIES a selection from one shape to another. Absent keys stay absent: a claim that declares nothing changes
     shape nowhere. FRAME v106.1 added excluded_facets, whose value is a sequence — copied for the same reason the
     map always was, so a carried selection can never alias the caller's container."""
     sel = selection or {}
     out = {}
-    for key in (PREDOMINANT_SYSTEM_KEY, FACET_SYSTEMS_KEY, EXCLUDED_FACETS_KEY):
+    for key in (PREDOMINANT_SYSTEM_KEY, FACET_SYSTEMS_KEY, EXCLUDED_FACETS_KEY, PROJECT_CONFIG_KEY):
         if key in sel:
             v = sel[key]
-            if isinstance(v, Mapping):
+            if key == PROJECT_CONFIG_KEY:
+                import copy   # ARC-03a: the project header is nested; a carried selection never aliases it
+                out[key] = copy.deepcopy(v)
+            elif isinstance(v, Mapping):
                 out[key] = dict(v)
             elif isinstance(v, (list, tuple, set, frozenset)):
                 out[key] = list(v)

@@ -17,6 +17,7 @@ from confirmation_builder import build_confirmation_from_selections
 from eagleview_geometry_parser import EagleViewGeometry, parse_eagleview_geometry
 from module2_assembly import RoofAssemblyResult, assemble_full_roof_scope
 from roof_systems import roof_system_keys, validate_roof_system_selection   # FRAME v104a: the per-facet system contract
+from roof_systems import PROJECT_CONFIG_KEY   # FRAME ARC-03a: a schema_version 1 project's header rides under this key
 
 
 XML_TEXT_KEYS = ("xml_text", "_xml_text", "eagleview_xml", "source_xml")
@@ -85,6 +86,17 @@ def build_scope_from_ui_selection(geom: EagleViewGeometry | str, ui_selection: M
     if selection.get("soffit_depth_in") not in (None, ""):
         confirmed_selection = {**dict(confirmed_selection),
                                "soffit_depth_in": float(selection["soffit_depth_in"])}
+    if PROJECT_CONFIG_KEY in selection:
+        # FRAME ARC-03a — A SCHEMA_VERSION 1 PROJECT. Its declared configuration is validated in full against THIS
+        # roof (record id, parser facets/structures, profiles through each package's resolver, exclusions, every
+        # in-scope facet declared) and carried onto the confirmed selection by the ONE shared carry. No legacy
+        # material key is read; a selection that sends one too is refused.
+        import module1_service  # noqa: F401 — registers every installed roof-system package (its registration site)
+        from project_config import carry_to_engine
+        validate_roof_system_selection(roof_system_keys(selection), parsed_geom.roof_faces)   # one authority; exclusions
+        confirmed_selection = {**dict(confirmed_selection),
+                               **carry_to_engine(selection, xml_text=xml_text, geometry=parsed_geom)}
+        return assemble_full_roof_scope(xml_text, confirmed_selection)
     shake_measurements = selection.get("shake_measurements") or selection.get("shakeMeasurements") or selection.get("shake_profile")
     if shake_measurements:
         confirmed_selection = {**dict(confirmed_selection), "shake_measurements": shake_measurements}
@@ -225,6 +237,72 @@ def _selection_for_candidate_display(selection: Mapping[str, Any]) -> Mapping[st
         # payload cannot smuggle in an unasserted transition.
         "transition_repairs": [dict(r) for r in (selection.get("transition_repairs", ()) or ())],
     }
+
+
+def validate_saved_claim(xml_text: str, selection: Mapping[str, Any], project_config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """FRAME ARC-03a r1 — THE engine-side check of a saved claim, run by page 1 (bridge validateProjectConfig) BEFORE
+    anything is written to the session:
+      1. the project against THIS XML — record id, parser facets / structures, profiles through each package's
+         resolver, exclusions, every roof facet declared, no second material authority (project_config.carry_to_engine);
+      2. the confirmed selection as the engine receives it MUST COMPUTE (build_scope_from_ui_selection): ids that are
+         not on this roof, rows the engine refuses, or a selection it cannot read are a refusal here, not on page 4.
+    Returns the validated header. Raises; it never repairs a claim."""
+    from project_config import ProjectConfigError, carry_to_engine
+    if not isinstance(selection, Mapping):
+        raise ProjectConfigError("FRAME ARC-03a: the saved selection must be an object")
+    ui = {**dict(selection), PROJECT_CONFIG_KEY: project_config}
+    import module1_service  # noqa: F401 — registers every installed roof-system package
+    parsed = parse_eagleview_geometry(xml_text)
+    header = carry_to_engine(ui, xml_text=xml_text, geometry=parsed)[PROJECT_CONFIG_KEY]
+    build_scope_from_ui_selection(xml_text, ui)
+    return header
+
+
+UNRESOLVED_EXPORT_REASON = "UNRESOLVED_ROOF_SYSTEM_OPERATIONS"
+
+
+def scope_export_gate(module2_result) -> Mapping[str, Any]:
+    """FRAME ARC-06a — THE export authority for roof-system completeness. A scope with ANY refused event
+    (module2_assembly.UnsupportedOperation: the facet's own package refused it, or a merge spans materials) or ANY
+    held roof-level operation (HeldOperation: work whose mixed-material rule the owner has not ruled) is NOT a complete
+    required scope, so it must never leave the program as a report or a comparison. Returns
+    {"blocked": False} or {"blocked": True, "reason", "message", "unsupported": [...], "held": [...]} — every item
+    named by facet/event/system (or system/edges) in the engine's own words. Recomputed from the result every time;
+    no page flag can clear it."""
+    uo = list(getattr(module2_result, "unsupported_operations", ()) or ())
+    ho = list(getattr(module2_result, "held_operations", ()) or ())
+    if not uo and not ho:
+        return {"blocked": False}
+    items = [f"facet {u.designator or u.face_id} — {u.event} [{u.system_id}]: refused by its roof-system package"
+             if u.kind == "PACKAGE_REFUSED" else
+             f"{u.event} spans facets of different roof systems [{u.system_id}]: not computed" for u in uo]
+    items += [f"{h.operation} on {h.system_id} eaves ({', '.join(f'{k} {v}' for k, v in h.basis)}; edges "
+              f"{', '.join(h.edge_ids)}): held for an owner decision" for h in ho]
+    return {
+        "blocked": True,
+        "reason": UNRESOLVED_EXPORT_REASON,
+        "message": ("This claim contains work FRAME will not compute or bill yet, so no report can be exported as a "
+                    "complete scope: " + "; ".join(items) + ". Change or remove these events (or exclude the facet) "
+                    "— or wait for the owner ruling — and build again."),
+        "unsupported": [{"face_id": u.face_id, "designator": u.designator, "component_type": u.component_type,
+                         "event": u.event, "system_id": u.system_id, "kind": u.kind, "reason": u.reason} for u in uo],
+        "held": [{"operation": h.operation, "system_id": h.system_id, "basis": [list(b) for b in h.basis],
+                  "edge_ids": list(h.edge_ids), "reason": h.reason} for h in ho],
+    }
+
+
+def report_profile_for_selection(xml_text: str, ui_selection: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """FRAME ARC-03a: the claim-level profile the REPORT's derivation text renders from, for a schema_version 1
+    selection — the SAME projection the scope was computed with (project_config.carry_to_engine), i.e. the user's
+    declared profile. {} for a legacy selection (the bridge reads its legacy key first, exactly as before) and for a
+    project whose in-scope facets carry no profile of that package. Presentation only; no quantity depends on it."""
+    sel = ui_selection or {}
+    if PROJECT_CONFIG_KEY not in sel:
+        return {}
+    import module1_service  # noqa: F401 — registers every installed roof-system package
+    from project_config import carry_to_engine
+    return carry_to_engine(sel, xml_text=xml_text, geometry=parse_eagleview_geometry(xml_text)).get(
+        "shake_measurements") or {}
 
 
 def _truthy_any(row: Mapping[str, Any], keys: tuple[str, ...]) -> bool:

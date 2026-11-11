@@ -43,8 +43,7 @@ GAPS rather than corrections are named there and in the ledger.
 
 THE VALLEY DISTURBANCE lives in modbit_geometry.py, and refuses by name: see its docstring.
 """
-from scope_contract import (CAP_THRESHOLD, MEMBRANE_LEG_FT,
-                            MEMBRANE_PATCH_BANDS, MEMBRANE_SKYLIGHT_CURB_FT, ScopeLine, SYSTEM_BOUNDARY)
+from scope_contract import CAP_THRESHOLD, ScopeLine, SYSTEM_BOUNDARY
 # FRAME v106.6d: the cut-back is DERIVED from this package's own declared setback, so the carve and the
 # patch read ONE number. Asking the registry rather than importing modbit_geometry directly keeps the single
 # source of truth at the declaration, and avoids this module importing its own package's geometry.
@@ -52,6 +51,50 @@ from roof_systems import appurtenance_clearance_in as _declared_clearance_in
 from shared_category_registry import skylight_operation as _skylight_operation
 
 from modbit_categories import FIELD_CATEGORY_ID, PATCH_CATEGORY_ID, SYSTEM_ID
+
+# ---- FRAME ARC-04a: the three membrane detail values, MOVED HERE from core/contracts/scope_contract.py ----------
+# Unchanged in value, unit and meaning; this module is, and was, their only reader. They sat in core because the
+# ruling below calls them the flat FAMILY's (MODBIT, TPO, EPDM) rather than one package's, and a package cannot
+# import another. ARC-04a does NOT decide that family question: with MODBIT the only membrane package, the values
+# live with the implementation that bills them. Whether a future TPO / EPDM package shares them, and through
+# what seam, is an owner decision for the build that adds that package — not a shared constant kept in core.
+# The comments below are carried over verbatim from scope_contract.
+# ---- FRAME v106.6: THE FLAT-ROOF DETAIL CONSTANTS, here for the reason CAP_THRESHOLD is here ------
+# Joseph, 2026-11-04, ruling the appurtenance detail: "your proposals are good for the MODBIT and really for
+# TPO and EPDM as well." These numbers are therefore NOT any system's. They are the detail's and Xactimate's,
+# identical across MODBIT, TPO and EPDM, and a package cannot import another package — so a copy in each
+# flat package as it is written is the failure this file was opened to fix one version ago.
+#
+# They do NOT contradict Finding 1 of the line-items doc ("a shared flat-roof profile struct would be wrong
+# four times out of four"). That rules on PROFILES — application method, ply count, attachment, thickness —
+# which genuinely differ per system. A 6in cut-back and a 4in curb do not.
+
+# The vertical membrane leg. The SAME 12in at a wall (v106.5), at a parapet, and up a chimney chase
+# (Joseph, 2026-11-04: "you flash it with MODBIT like you do with walls").
+MEMBRANE_LEG_FT = 1.0
+
+# A skylight curb is a MINIMUM of 4 inches, and the leg stops there — "the curb is usually 4", so the leg
+# isn't as big, before the skylight goes over the curb". Minimum, so this under-states a taller curb and
+# can only err toward the carrier, which is the same property the blank-sidewall default relies on.
+MEMBRANE_SKYLIGHT_CURB_FT = 4.0 / 12.0
+
+# THE CUT-BACK. Joseph's repair method: 12 inches added to BOTH dimensions, for a 6in cut-back on all sides.
+# His worked example is this constant's test: a 2ft x 2ft skylight gives a 3ft x 3ft footprint = 9 SF.
+# The quantity INCLUDES the appurtenance's own footprint — it is the cut-out rectangle, not a collar.
+# FRAME v106.6d: MEMBRANE_CUTBACK_FT IS GONE, and that is a correction of a lie QA shipped.
+# v106.6c's comment in modbit_geometry.py claimed "ONE number, declared once, read by the carve and by the
+# patch" and its prompt said the two "now cannot disagree". Both were false: the carve read the package's
+# declared appurtenance_clearance_in (6 in) while the patch read THIS constant (1.0 ft). They agreed in
+# value — 2 x 6 in is 1 ft — and nothing derived either from the other, so a change to one moved only its
+# own side. The builder found it, QA confirmed it by reading the shipped code, and ledger entry 129 records
+# it as QA error 77. The cut-back is now DERIVED from the declared clearance in modbit_scope_expansion, so
+# the sentence is true for the first time and there is one declaration instead of two.
+
+# The patch bands, in SF PER PATCH, billed EACH (Joseph: "It's each. So it gives you 1 each for a 4SF
+# patch"). Xactimate's, identical on `SPLYPT*` (single-ply) and `RUBPT*` (rubber), so they are the flat
+# family's and not a package's. Ordered LARGEST FIRST because that is the order the multiple-patch rule
+# fills in, and a band list that is sorted the other way would read as ascending and fill wrongly.
+MEMBRANE_PATCH_BANDS = (15.0, 9.0, 4.0)
 
 # The membrane turned up a wall: 12 inches, as one foot, because the field line is in SQ.
 WALL_LEG_FT = 1.0

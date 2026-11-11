@@ -170,6 +170,14 @@
 
     import { ready, buildModule3Report } from './pyodide_bridge.js';
 
+    // FRAME ARC-03a r1 — FINISH A COMMITTED CLAIM LOAD BEFORE ANYTHING READS THE SESSION. A saved-claim load commits
+    // with one marker key and then settles; if settling could not finish, this page finishes it now — or stops,
+    // showing why — so it never reads a half-written claim (claim_codec.js settleOrStop). The codec is imported only
+    // while a load is pending, so an ordinary visit runs exactly as before.
+    if (sessionStorage.getItem('woodShakeWorkbench.claimLoadTxn') !== null) {
+      (await import('./claim_codec.js')).settleOrStop(sessionStorage, document);
+    }
+
     const modePill = document.getElementById('modePill');
     const statusText = document.getElementById('statusText');
     const warnNotice = document.getElementById('warnNotice');
@@ -488,30 +496,10 @@
     // images live in the claim folder beside the file and are re-attached on load. Branding (logo /
     // "Prepared by") is per-device localStorage and is deliberately NOT written here - a claim handed
     // to a colleague must never carry another company's branding.
-    const CLAIM_FILE_FORMAT = 'woodshake-claim';
-    const CLAIM_FILE_VERSION = 'v81';                 // MUST match the version constant in index.html
-    const CLAIM_PREFIX = 'woodShakeWorkbench.';
-    const CLAIM_KEYS = ['claimState', 'page2Payload', 'page2Selection',
-                        'page2Restore', 'carrierConfirmation', 'reportEvidence'];
-
-    function serializeClaim() {
-      const state = {};
-      for (const k of CLAIM_KEYS) {
-        const raw = sessionStorage.getItem(CLAIM_PREFIX + k);
-        if (raw == null) continue;
-        let val;
-        try { val = JSON.parse(raw); } catch (_e) { continue; }
-        if (k === 'reportEvidence' && val && Array.isArray(val.photos)) {
-          val = Object.assign({}, val, {
-            photos: val.photos.map((p) => ({ name: String(p.name || ''), caption: String(p.caption || '') }))
-          });
-        }
-        state[k] = val;
-      }
-      return { format: CLAIM_FILE_FORMAT, version: CLAIM_FILE_VERSION,
-               savedAt: new Date().toISOString(), state };
-    }
-
+    // FRAME ARC-03a: the file format, its version and every rule live in ONE codec (claim_codec.js), shared with
+    // page 1's loader — no second copy of a constant here. It is loaded when Save is pressed. The codec REFUSES to
+    // write a session it cannot represent: no project configuration (a pre-ARC-03a session), or a roof-system
+    // declaration that changed after the scope was confirmed (stale work is never exported).
     function claimFileName() {
       const conf = readJson('woodShakeWorkbench.carrierConfirmation');
       const vci = (conf && conf.vci) || {};
@@ -521,13 +509,16 @@
       return `${slug}_${day}.wsclaim`;
     }
 
-    document.getElementById('saveClaimBtn').addEventListener('click', () => {
-      const claim = readJson('woodShakeWorkbench.claimState');
-      if (!claim || !claim.uiSelection) {
-        showError('There is no confirmed claim in this session to save. Build the scope first.');
+    document.getElementById('saveClaimBtn').addEventListener('click', async () => {
+      let claimObj;
+      try {
+        const codec = await import('./claim_codec.js');
+        claimObj = codec.encodeClaim(sessionStorage);
+      } catch (e) {
+        showError(e && e.message ? e.message : 'The claim could not be saved.');
         return;
       }
-      const blob = new Blob([JSON.stringify(serializeClaim(), null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(claimObj, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = claimFileName();
@@ -547,7 +538,7 @@
       const parts = [];
       if (notice.versionMismatch) {
         parts.push('This claim was saved by ' + (notice.fromVersion || 'an earlier version')
-          + ', and you are running ' + (notice.runningVersion || CLAIM_FILE_VERSION)
+          + ', and you are running ' + (notice.runningVersion || 'this version')
           + '. Corrections since then may legitimately change a number - this is expected, not an error.');
       }
       const pending = Array.isArray(notice.photosPending) ? notice.photosPending : [];
@@ -566,6 +557,23 @@
       if (!claim || !claim.xmlText || !claim.uiSelection) {
         showError('No confirmed scope found in this session. Start from Page 1 and confirm a selection on Page 2.');
         return;
+      }
+      // FRAME ARC-03a — STALE WORK IS NEVER EXPORTED. The scope was confirmed with the project declaration it carries
+      // (uiSelection.project_config); if the project's declaration has changed since (a roof system, a structure or a
+      // facet exception), the report would describe a roof the user no longer declares. Refuse, and say where to go.
+      // A pre-ARC-03a session carries neither and is unaffected.
+      {
+        const declared = readJson('woodShakeWorkbench.projectConfig');
+        const carried = claim.uiSelection.project_config;
+        const canon = (v) => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']'
+          : (v && typeof v === 'object') ? '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}'
+          : JSON.stringify(v);
+        if ((declared || carried) && (!declared || !carried || canon(declared) !== canon(carried))) {
+          showError('The project\u2019s roof-system declaration changed after the scope was confirmed. Go back to '
+            + 'page 2 and press Continue so the scope is recomputed before a report is produced.');
+          backBtn.setAttribute('href', './page2.html');
+          return;
+        }
       }
 
       // Carrier-absent path: page 2 routes straight here when no estimate was attached, so there is
@@ -629,6 +637,22 @@
           comparison_intended: comparisonIntended
         });
 
+        // FRAME ARC-06a — the engine refused to export an UNRESOLVED roof-system scope (an event the facet's own
+        // package refused, or a held mixed-roof operation). Its own message names every item; nothing is rendered.
+        if (result && result.blocked && result.blocked_reason === 'UNRESOLVED_ROOF_SYSTEM_OPERATIONS') {
+          const box = document.createElement('div');
+          box.id = 'unresolvedRoofSystemBlock';
+          box.setAttribute('data-blocked-reason', result.blocked_reason);
+          box.textContent = result.blocked_message || 'This claim contains unresolved roof-system work.';
+          showError('Report export is blocked: the scope is not complete. ' + box.textContent);
+          errNotice.appendChild(document.createElement('br'));
+          errNotice.appendChild(box);
+          box.style.display = 'none';            // the readable text is in the notice; the node carries the reason
+          backBtn.setAttribute('href', './page2.html');
+          printBtn.disabled = true;              // nothing to print or save: a blocked scope is never an artifact
+          downloadBtn.disabled = true;
+          return;
+        }
         modePill.textContent = result.mode === 'COMPARISON' ? 'Comparison' : 'Required scope only';
         const bits = [];
         if (result.mode === 'COMPARISON') {

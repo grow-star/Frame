@@ -25,6 +25,7 @@ const ENGINE_FILES = [
   "module2_assembly.py",
   "roof_systems/wood_shake/module2_scope_expansion.py",
   "core/contracts/scope_contract.py",
+  "core/contracts/project_config.py",       // FRAME ARC-03a: the versioned ProjectConfig + THE material resolver (imports roof_systems, listed above)
   "core/roof_selection/notch_candidate_emitter.py",
   "regression_test.py",
   "core/geometry/transition_enumerator.py",
@@ -40,6 +41,7 @@ const ENGINE_FILES = [
   "roof_systems/modbit/modbit_categories.py",         // FRAME v106.4: the category ids modbit OWNS; imported by the boot helper
   "roof_systems/modbit/modbit_content.py",            // FRAME v106.4: modbit's words (label + carrier vocabulary; it declares NO report text — see its docstring); imported by modbit_categories
   "core/registry/package_content.py",                  // FRAME v101: core reads a package's words here, at call time (never imports the package)
+  "installed_packages.py",                             // FRAME ARC-05a: THE composition root — the ONE module outside roof_systems/ that names the installed packages; the helper below and every engine entry register them through it
   "module3_keying.py",
   "operation_dimension.py",
   "module3_comparison_oracle.py",
@@ -58,6 +60,7 @@ const ENGINE_FILES = [
   "core/reporting/module3_language_guard.py",
   "module3_caller.py",
   "category_display_names.py",
+  "category_surfaces.py",   // FRAME ARC-06a (B3): the pages' category surfaces, from the registry (categorySurfaces)
   "core/reporting/report_diagram_svg.py",
   // Layer A: raw carrier-estimate text -> structured header + line items (page 3 prefill).
   "carrier_layer_a.py",
@@ -97,12 +100,14 @@ async function initializePythonHelpers(pyodide) {
 import json
 from dataclasses import asdict, is_dataclass
 # FRAME v97 BRIDGE 3: the app loads its roof-system packages ONCE, here, before any page's Python runs.
-# Every page (1-4) boots through this helper. A package added later is its files + one line here.
-import wood_shake_categories
-# FRAME v106.4: the second package, by that same rule. Its categories module imports its content module, so
-# this one line loads the label and the carrier vocabulary on every page, exactly as wood_shake's does. The
-# GEOMETRY modules of both packages are imported by module1_service, not here.
-import modbit_categories
+# Every page (1-4) boots through this helper.
+# FRAME ARC-05a: through the application's ONE composition root. install_vocabulary() imports every installed
+# package's CATEGORY module (which loads its content module) — exactly the two imports this helper made until
+# ARC-05a, in the same order — and registers no roof system and loads no engine. The GEOMETRY modules are
+# registered by the engine modules (module1_service, module2_assembly) through the same root. A package added
+# later is its files in ENGINE_FILES + its entry in installed_packages.py; this helper does not change.
+import installed_packages
+installed_packages.install_vocabulary()
 # FRAME v106.6g2 / B2: the shared appurtenance-review authority, imported once here so
 # every page's Python can reach it, by the same rule as the package category modules.
 import appurtenance_review
@@ -124,19 +129,31 @@ def _wb_scope_summary(scope_result):
     # FRAME v98: the field covering comes from the ONE authority — module2_assembly.field_quantities, shaped by
     # field_summary. No loop over the scope lives here any more (v97.1's _wb_shake_ea read the first field line
     # and discarded its unit; page 2 printed a full replacement's 60.365 SQ as "60" under "Total shakes").
-    from module2_assembly import field_summary
+    from module2_assembly import field_summary, field_quantities_by_system, field_by_system_display
     plain = _wb_to_plain(scope_result)
-    fs = field_summary(scope_result)
-    # total_EA: EXACT v97.1 value and semantics (C-5) — additive change only; the misleading name is a known-open.
-    v = fs["legacy_total_EA"]
-    try:
-        v = float(v) if v is not None else 0.0
-        plain["total_EA"] = int(v) if v.is_integer() else v
-    except (TypeError, ValueError):
-        plain["total_EA"] = 0
-    # what page 2 renders: the figure IN ITS OWN UNIT, primary (SQ when present) + the alternate on a mixed claim
-    plain["field_qty"], plain["field_unit"] = fs["field_qty"], fs["field_unit"]
-    plain["field_qty_alt"], plain["field_unit_alt"] = fs["field_qty_alt"], fs["field_unit_alt"]
+    _by_sys = field_quantities_by_system(scope_result)
+    if len(_by_sys) > 1:
+        # FRAME ARC-06a r1: field covering from TWO OR MORE roof systems (e.g. a MODBIT replacement whose tie-in bills
+        # wood-shake field on the shake side). field_summary RAISES here by design (v104d: one claim-level figure would
+        # sum two coverings or pick one), which made page 2 unable to compute or Continue on such a claim. The page now
+        # gets the PER-SYSTEM figures (the v104d authority, field_quantities_by_system) under each package's own field
+        # label (module2_assembly.field_by_system_display), and the claim-level keys are None — nothing summed, nothing
+        # picked. Single-system output: unchanged.
+        plain["total_EA"] = None
+        plain["field_qty"] = plain["field_unit"] = plain["field_qty_alt"] = plain["field_unit_alt"] = None
+        plain["field_by_system"] = field_by_system_display(scope_result)
+    else:
+        fs = field_summary(scope_result)
+        # total_EA: EXACT v97.1 value and semantics (C-5) — additive change only; the misleading name is a known-open.
+        v = fs["legacy_total_EA"]
+        try:
+            v = float(v) if v is not None else 0.0
+            plain["total_EA"] = int(v) if v.is_integer() else v
+        except (TypeError, ValueError):
+            plain["total_EA"] = 0
+        # what page 2 renders: the figure IN ITS OWN UNIT, primary (SQ when present) + the alternate on a mixed claim
+        plain["field_qty"], plain["field_unit"] = fs["field_qty"], fs["field_unit"]
+        plain["field_qty_alt"], plain["field_unit_alt"] = fs["field_qty_alt"], fs["field_unit_alt"]
     plain["total_SF"] = plain.get("affected_SF_display_total")
     plain["valley_LF"] = plain.get("selected_valley_LF_total")
     # Each ridge's CONTACTED length — the run the repair actually touches. It bounds the vent (you
@@ -167,12 +184,43 @@ export function ready() {
   return readyPromise;
 }
 
+// FRAME ARC-06a r1: a Python exception raised inside REAL Pyodide reaches JavaScript as a PythonError whose message is
+// the WHOLE traceback (file paths, carets, frames). Pages show error.message verbatim, so the engine's NAMED stop (e.g.
+// "…a SYSTEM BOUNDARY …") was buried under a traceback the user cannot act on — found by the real-Pyodide lane, not
+// by the CPython stand-in, which already reports "PYTHON: <Type>: <message>". The page now gets exactly that shape in
+// both runtimes; the full traceback stays on the error (.pythonTraceback) and in the console. Non-Python errors pass
+// through untouched.
+function pythonErrorForPage(err) {
+  // (string operations only — no regex literals: bridge_selection_passthrough_regression's scanner refuses them)
+  const text = err && typeof err.message === 'string' ? err.message : '';
+  const type = err && typeof err.type === 'string' ? err.type : '';
+  if (!type || text.indexOf('Traceback (most recent call last)') < 0) return err;
+  const lines = text.trimEnd().split('\n');
+  let i = -1;
+  for (let k = lines.length - 1; k >= 0; k -= 1) {
+    const ln = lines[k];
+    if (ln.startsWith(' ')) continue;                       // frames, source and carets are indented
+    const name = ln.split(':')[0];
+    if (name === type || name.endsWith('.' + type)) { i = k; break; }
+  }
+  if (i < 0) return err;
+  const first = lines[i];
+  const dotted = first.split(':')[0];
+  const msg = [type + first.slice(dotted.length)].concat(lines.slice(i + 1)).join('\n');
+  const out = new Error('PYTHON: ' + msg);
+  out.pythonTraceback = text;
+  try { console.error(text); } catch (_e) {}
+  return out;
+}
+
 async function runJson(pythonSource, globals = {}) {
   const pyodide = await ready();
   for (const [name, value] of Object.entries(globals)) pyodide.globals.set(name, value);
   try {
     const jsonText = await pyodide.runPythonAsync(pythonSource);
     return JSON.parse(jsonText);
+  } catch (err) {
+    throw pythonErrorForPage(err);
   } finally {
     for (const name of Object.keys(globals)) {
       try { pyodide.globals.delete(name); } catch (_e) {}
@@ -316,6 +364,11 @@ out = {
     "duplicate_comparison_categories": list((carrier_summary or {}).get("duplicate_comparison_categories", []) or []),
     "scope_comparison": _wb_to_plain(result.get("scope_comparison")),
 }
+# FRAME ARC-06a: the comparison is never a complete one while the scope holds refused / held work
+from workbench_seam import scope_export_gate
+_g = scope_export_gate(module2_result)
+if _g.get("blocked"):
+    out["scope_gate"] = _g
 json.dumps(out)
 `, { xml_text: xmlText, ui_selection_json: JSON.stringify(uiSelection || {}), rows_json: JSON.stringify(carrierRows || []) });
 }
@@ -335,7 +388,7 @@ export async function buildModule3Report(xmlText, uiSelection, carrierRows, vci,
   try { brandPreparedBy = localStorage.getItem("woodShakeBranding.preparedBy") || ""; } catch (e) {}
   return runJson(`
 import json
-from workbench_seam import build_scope_from_ui_selection
+from workbench_seam import build_scope_from_ui_selection, report_profile_for_selection
 from manual_carrier_entry import build_carrier_summary_from_manual_entry
 from comparison_caller import build_scope_comparison
 from argument_caller import build_scope_argument
@@ -363,6 +416,15 @@ claim_name = opts.get("claim_name") or "Wood Shake Repair"
 # are all refused the same way. Nothing is rendered on the blocked path - there is no projection, no
 # html, and therefore nothing to print or download, never a partial report.
 _review = export_review_gate(xml_text, ui_selection)
+# FRAME ARC-06a - THE SECOND BACKSTOP: roof-system completeness. A scope holding ANY event the facet's own package
+# refused, or any held mixed-roof operation, is not a complete required scope: nothing is rendered, exactly like the
+# review block above. Computed from the engine's own result (workbench_seam.scope_export_gate), never a page flag.
+from workbench_seam import scope_export_gate
+_m2 = None
+_scope_gate = {"blocked": False}
+if not _review.get("blocked"):
+    _m2 = build_scope_from_ui_selection(xml_text, ui_selection)
+    _scope_gate = scope_export_gate(_m2)
 if _review.get("blocked"):
     _result = {
         "mode": None, "status": None, "gated": True, "exported": False,
@@ -374,8 +436,22 @@ if _review.get("blocked"):
         "sections": [], "carrier_parser_status": None,
         "duplicate_comparison_categories": [],
     }
+elif _scope_gate.get("blocked"):
+    _result = {
+        "mode": None, "status": None, "gated": True, "exported": False,
+        "blocked": True, "blocked_reason": _scope_gate["reason"],
+        "blocked_message": _scope_gate["message"],
+        "scope_gate": _scope_gate,
+        "review": _review,
+        "unresolved_ids": [], "unresolved_reasons": [],
+        "html": "", "lines": [], "language_gate_hard": [],
+        "sections": [], "carrier_parser_status": None,
+        "duplicate_comparison_categories": [],
+    }
 else:
-    module2_result = build_scope_from_ui_selection(xml_text, ui_selection)
+    # FRAME ARC-06a: the scope the gate just judged — built once (built here only if guard 1 above was bypassed,
+    # so guard 2 below still receives a real scope to refuse)
+    module2_result = _m2 if _m2 is not None else build_scope_from_ui_selection(xml_text, ui_selection)
     # Every relevant item is explicitly confirmed or corrected, so the internal question has been
     # ANSWERED and must not appear in a document a carrier reads. Presentation only: citations lose
     # that one clause; quantities, categories, units and the CONFIRM tier are untouched.
@@ -420,7 +496,10 @@ else:
     # The measured shake profile drives §3's shake-count derivation (per-shake coverage + shakes/SQ).
     # It rides along in the ui_selection the scope was built from — the SAME measurements Module 2 used —
     # so the derivation is never on the defaults. Presentation only; no computed value depends on it.
-    shake_measurements = ui_selection.get("shake_measurements") or ui_selection.get("shake_profile") or {}
+    # FRAME ARC-03a: a schema_version 1 selection carries NO legacy profile key (the seam above refused one), so its
+    # profile comes from the ONE shared carry — the user's declared profile; a legacy selection reads exactly as before.
+    shake_measurements = (ui_selection.get("shake_measurements") or ui_selection.get("shake_profile")
+                          or report_profile_for_selection(xml_text, ui_selection))
     # Per-device branding (base64 logo + typed attribution), read from localStorage above. Presentation only.
     logo_data_uri = brand_logo or None
     prepared_by = brand_prepared_by or None
@@ -532,9 +611,72 @@ json.dumps(_rows)
 `, {});
 }
 
+// FRAME ARC-03a: what page 1 may ask about each INSTALLED roof system — the same registry rows page 2 lists, plus
+// each package's own profile declaration (the settings a declared profile must carry and any visibly labelled
+// presets). No JavaScript catalog: a package added later appears here by registering.
+// -> [{system_id, label, profile: {settings: {name: {nullable, choices}}, presets: {id: {label, settings}}} | null}]
+export async function materialProfileCatalog() {
+  return runJson(`
+import json
+import workbench_seam  # noqa: F401 — page 2's engine path
+import module1_service  # noqa: F401 — registers every installed roof-system package (its registration site)
+import roof_systems as _RS
+import shared_category_registry as _R
+import package_content as _PC
+_labels = _PC.display_labels()
+_rows = []
+for _sid in sorted(_RS.registered()):
+    try:
+        _label = _labels.get(_R.field_category_id(_sid)) or _sid
+    except Exception:
+        _label = _sid
+    _rows.append({"system_id": _sid, "label": str(_label), "profile": _RS.profile_declaration(_sid)})
+json.dumps(_rows)
+`, {});
+}
+
+// FRAME ARC-06a (B3): the ids and labels page 2 / page 3 show, from THE category authority (shared_category_registry +
+// package content, through category_surfaces.py). The pages hold no category list of their own; they fill empty
+// containers from this on load. A package registered later appears here by registering.
+export async function categorySurfaces() {
+  return runJson(`
+import json
+import category_surfaces as _CS
+json.dumps(_CS.category_surfaces())
+`, {});
+}
+
+// FRAME ARC-03a: THE Python validator (core/contracts/project_config.py), asked from the browser so no page holds a
+// second copy of the rules. With no selection: the project header against this XML (page 1 Continue). With a
+// selection (saved-claim load, ARC-03a r1): workbench_seam.validate_saved_claim — the project as the seam carries
+// it AND the confirmed selection computed by the engine. ANY engine refusal is a refusal (fail closed).
+// -> {ok: true, project_config} | {ok: false, error, missing_declaration}
+export async function validateProjectConfig(xmlText, projectConfig, selection = null) {
+  return runJson(`
+import json
+import workbench_seam  # noqa: F401
+import module1_service  # noqa: F401 — registers every installed roof-system package
+import project_config as _PCFG
+_cfg = json.loads(cfg_json)
+_sel = json.loads(sel_json)
+try:
+    if _sel is None:
+        _hdr = _PCFG.validate_project_config(_cfg, xml_text=xml_text, selection={})
+    else:
+        _hdr = workbench_seam.validate_saved_claim(xml_text, _sel, _cfg)
+    _out = {"ok": True, "project_config": _hdr}
+except Exception as _e:   # fail closed: whatever the engine refuses, the claim is refused (never half-loaded)
+    _out = {"ok": False, "error": str(_e) or type(_e).__name__,
+            "missing_declaration": isinstance(_e, _PCFG.MaterialDeclarationMissing)}
+json.dumps(_out)
+`, { xml_text: String(xmlText || ""), cfg_json: JSON.stringify(projectConfig ?? null),
+     sel_json: JSON.stringify(selection ?? null) });
+}
+
 globalThis.WoodShakePyodideBridge = {
   ready, bundledXmlText, roofLayout, scopeFromSelection, diagramData,
   workbenchUpdate, yagerUiSelection, yagerScope,
   requiredScope, buildCarrierSummary, buildScopeComparison, buildModule3Report, transitionStates,
-  parseCarrierEstimate, registeredRoofSystems,
+  parseCarrierEstimate, registeredRoofSystems, materialProfileCatalog, validateProjectConfig,
+  categorySurfaces,
 };

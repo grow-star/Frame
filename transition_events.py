@@ -37,6 +37,8 @@ from __future__ import annotations
 from typing import List, Mapping, Optional, Sequence
 
 from roof_systems import course_top_ft, system_for_profile   # FRAME v105.4: the profile's OWN package answers (no package import)
+from roof_systems import claim_geometry_profile, geometry_profile_for_facet   # FRAME ARC-06a (B1): per-facet sweep
+from roof_systems import unlabelled_profile_owner             # FRAME ARC-06a (B1)
 from scope_contract import (CAP_THRESHOLD,   # FRAME v106.5: THE ONE continuous-metal rule — this module held a
                             METAL_EXPOSED, METAL_MEMBRANE,   # copy of a package's constant and said so in a comment
                             TRANSITION_METAL_VALUES)   # FRAME v100: the contract's core home (was module2_scope_expansion)
@@ -145,15 +147,36 @@ def selected_transitions(geom, confirmed_selection) -> list:
 # ---------------------------------------------------------------------------
 
 
-def transition_contact_lf(geom, transition, selected_valley_ids) -> float:
+def transition_contact_lf(geom, transition, selected_valley_ids, confirmed_selection=None) -> float:
     """Affected-area contact along this transition, from OTHER repairs (the selected valleys).
 
     Read on BOTH facets and the LARGER taken: the flashing is a single continuous piece spanning
     the edge, so if the repair sweeps its full length on either slope, that flashing is torn out.
     (On Yager's L33 this is 100% on V and 0% on P — the metal is still gone.)
+
+    FRAME ARC-06a (B1): with `confirmed_selection`, each facet's sweep is read with THAT facet's own profile
+    (roof_systems.geometry_profile_for_facet) — never wood shake's fan on a membrane facet. Without it (a caller
+    that has no selection), the old call, byte-identical.
     """
+    _pff = None
+    if confirmed_selection is not None:
+        _claim = claim_geometry_profile(confirmed_selection)
+        _owner = unlabelled_profile_owner()
+
+        def _pff(fid):
+            # A facet of the package that owns UNLABELLED profiles (the package this reading was written for) keeps
+            # the EXACT pre-ARC-06a call — no profile, so that package resolves its own defaults — because this
+            # reading has never used the claim's measured profile and changing that is not B1 (it would move Path-A
+            # transitions on every measured claim; disclosed as an adjacent finding). Any OTHER package's facet is
+            # read with its own profile: wood shake's fan is never run on a membrane facet.
+            # The facet's system is read off its own profile (geometry_profile_for_facet — the ONE facet authority,
+            # system_for_facet, inside it), so this module adds no resolution path of its own.
+            _prof = geometry_profile_for_facet(fid, confirmed_selection, _claim)
+            if _prof.get("system_id") == _owner:
+                return None
+            return _prof
     readings = transition_contact_readings(
-        geom, transition, selected_valley_ids=[str(v) for v in (selected_valley_ids or ())])
+        geom, transition, selected_valley_ids=[str(v) for v in (selected_valley_ids or ())], profile_for_face=_pff)
     return max([float(r["contact_LF"]) for r in readings] or [0.0])
 
 
@@ -173,7 +196,7 @@ def path_a_transitions(geom, confirmed_selection) -> list:
     for t in confirmed_transitions(geom):
         if t.edge_total_LF <= 0:
             continue
-        if transition_contact_lf(geom, t, valley_ids) >= CAP_THRESHOLD * float(t.edge_total_LF):
+        if transition_contact_lf(geom, t, valley_ids, confirmed_selection) >= CAP_THRESHOLD * float(t.edge_total_LF):
             fired.append(t)
     return fired
 

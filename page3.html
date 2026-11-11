@@ -136,6 +136,7 @@
       </label>
       <div class="blockmsg" id="blockMsg"></div>
       <div class="mixedop-notice" id="mixedOpNotice" style="display:none;"></div>
+      <div class="mixedop-notice" id="categorySurfacesNotice" role="alert" style="display:none;">The category list could not be loaded from the engine, so lines cannot be categorised yet. Reload the page. (No category list is guessed.)</div>
       <div id="lineList"></div>
       <div class="batchbar" id="batchBar" style="display:none">
         <span class="batch-label">Set the remaining undecided lines:</span>
@@ -168,25 +169,37 @@
     // must NEVER depend on the engine bridge's shape. Import the namespace (never throws on a missing
     // member) and fall back: op derivation -> null (uses R&R), unit list -> the built-in list.
     import * as bridge from './pyodide_bridge.js';
+
+    // FRAME ARC-03a r1 — FINISH A COMMITTED CLAIM LOAD BEFORE ANYTHING READS THE SESSION. A saved-claim load commits
+    // with one marker key and then settles; if settling could not finish, this page finishes it now — or stops,
+    // showing why — so it never reads a half-written claim (claim_codec.js settleOrStop). The codec is imported only
+    // while a load is pending, so an ordinary visit runs exactly as before.
+    if (sessionStorage.getItem('woodShakeWorkbench.claimLoadTxn') !== null) {
+      (await import('./claim_codec.js')).settleOrStop(sessionStorage, document);
+    }
     const ready = bridge.ready || (async () => { throw new Error('engine unavailable'); });
     const parseCarrierEstimate = bridge.parseCarrierEstimate
       || (async () => ({ status: 'TEXT_LAYER_ABSENT', lines: [], notes: [], claim_header: {} }));
     const proposeOperation = bridge.proposeOperation || (async () => null);
     const carrierUnitList = bridge.carrierUnitList || (async () => null);
+    // FRAME ARC-06a (B3): the category surfaces, from the engine. A stale bridge without it -> an EMPTY picker that says
+    // so (data-category-surfaces="unavailable"), never a guessed list.
+    const categorySurfaces = bridge.categorySurfaces || (async () => { throw new Error('categorySurfaces unavailable'); });
     // v75: flag categories the engine will split into more than one operation (Detach & Reset + new
     // material). Resilient import: a stale bridge without it simply shows no notice, never breaks page 3.
     const mixedOperationCategories = bridge.mixedOperationCategories || (async () => []);
 
-    // 29 ids since POWER_VENT landed; the name is historical and page-local (mirrors
-    // shared_category_registry, which is the authority and hash-locks the list).
-    // v74: matches shared_category_registry.REGISTRY (33 ids). The four new ids are receive-only
-    // categories a user can also map a line to by hand, so the picker must offer them.
-    const REGISTRY_28 = ['APPURT_IWS','BOX_VENT','CHIMNEY_CHASE_COVER','CHIMNEY_FLASH','DEBRIS_DISPOSAL',
-      'DRIP_EDGE','ENDWALL_FLASH','EQUIPMENT','FIELD_COVERING','FIELD_FELT','FIELD_TEAROFF','FLUE_CAP',
-      'GABLE_CORNICE','GENERAL_LABOR','HIGH_SLOPE_CHARGE','HIP_CAPS','IWS','PIPE_JACK_FLASH','POWER_VENT',
-      'RIDGE_CAPS','RIDGE_HIP_CAP','RIDGE_VENT','ROOFER_LABOR','SHAKE_FIELD_RR','SKYLIGHT_FLASH','STARTER',
-      'STEEP_CHARGE','STEP_FLASH','TRANSITION_FLASH','TURBINE_VENT','UNMAPPED','VALLEY_METAL','VENT_CAP'];
-    const CAT_LABEL = {
+    // FRAME ARC-06a (B3) — NO PAGE-SIDE CATEGORY LIST. The picker's ids, in order, and every label come from the
+    // ENGINE (shared_category_registry + package content, through bridge.categorySurfaces / category_surfaces.py), so
+    // a registered package's ids (MODBIT_FIELD_RR, MODBIT_PATCH, COUNTERFLASHING, SKYLIGHT_UNIT) can be mapped by hand.
+    // Until ARC-06a these two were LITERAL copies frozen at the wood-shake vocabulary (B3). They are EMPTY until
+    // loadCategorySurfaces fills them on load; the name REGISTRY_28 is historical.
+    const REGISTRY_28 = [];
+    const CAT_LABEL = {};
+    // Presentation wording ONLY: this page's own words for some categories (it says "Field felt" where the report
+    // says "Field felt / underlayment"). It can neither add nor remove an id — a key the engine does not list is
+    // never shown, and an id with no wording here takes the engine's label.
+    const CAT_LABEL_WORDING = {
       SHAKE_FIELD_RR:'Wood shake field', VALLEY_METAL:'Valley metal', PIPE_JACK_FLASH:'Pipe jack flashing',
       GENERAL_LABOR:'General labor', CHIMNEY_FLASH:'Chimney flashing', STEP_FLASH:'Step flashing',
       ENDWALL_FLASH:'Endwall flashing', TRANSITION_FLASH:'Transition flashing', SKYLIGHT_FLASH:'Skylight flashing',
@@ -321,6 +334,28 @@
 
     // v73 DEFECT 2: replace the fallback UNITS with the parser's authoritative list, then re-render so
     // any hand-entry dropdown already open picks up the full set (WK, MO, BF, BX, PR).
+    // FRAME ARC-06a (B3): fill the picker and its labels from the engine (the ONE category authority), then redraw.
+    // On failure the picker stays empty and says so — a guessed list is never shown.
+    async function loadCategorySurfaces() {
+      try {
+        const surf = await categorySurfaces();
+        if (!surf || !Array.isArray(surf.page3_picker) || !surf.page3_picker.length) throw new Error('no categories');
+        REGISTRY_28.splice(0, REGISTRY_28.length, ...surf.page3_picker.map(String));
+        for (const k of Object.keys(CAT_LABEL)) delete CAT_LABEL[k];
+        for (const id of REGISTRY_28) {
+          CAT_LABEL[id] = CAT_LABEL_WORDING[id] || String((surf.page3_labels || {})[id] || id);
+        }
+        document.body.setAttribute('data-category-surfaces', 'engine');
+        const n = document.getElementById('categorySurfacesNotice'); if (n) n.style.display = 'none';
+        renderRows();
+      } catch (_e) {
+        // FRAME ARC-06a (B3): the engine is the ONLY category authority. If it cannot answer (a stale bridge without
+        // categorySurfaces), the page stays alive but says so — it never falls back to a list of its own.
+        document.body.setAttribute('data-category-surfaces', 'unavailable');
+        const n = document.getElementById('categorySurfacesNotice'); if (n) n.style.display = 'block';
+      }
+    }
+
     async function loadUnitList() {
       try {
         const list = await carrierUnitList();
@@ -501,6 +536,7 @@
         restorePriorConfirmation();
         renderClaim(); renderRows(); updateSummary();
         loadUnitList();   // v73 DEFECT 2: derive the hand-entry unit dropdown from the parser
+        loadCategorySurfaces();   // FRAME ARC-06a (B3): the picker's ids and labels, from the engine
         return;
       }
 
@@ -513,6 +549,7 @@
       // stranded the user on a blank page with a disabled Continue.
       renderClaim(); renderRows(); updateSummary();
       loadUnitList();
+      loadCategorySurfaces();   // FRAME ARC-06a (B3)
 
       try {
         await ready();

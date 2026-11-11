@@ -5,6 +5,10 @@
 # CHANGELOG 2026-07-03: unified centerline-extent stair seed for flat valleys; anchor unchanged 3691.
 
 import re
+import hashlib as _hashlib                     # FRAME ARC-06a: the profile fingerprint (F-1/F-2)
+import json as _json
+import numbers as _numbers
+from collections.abc import Mapping as _Mapping
 from math import degrees, atan2, hypot        # FRAME v106.6d: hypot, for shared_edge_overlap_ft
 import numpy as np
 from matplotlib.path import Path
@@ -382,13 +386,72 @@ _GRID_CACHE_MAX = 64          # bounded: cannot grow without limit across roofs
 def _poly_key(poly):
     return tuple((float(x),float(y)) for x,y in poly)
 
-def _grid_cache_key(facet,pens,nots,res,prof):
+# ---- FRAME ARC-06a (F-1 / F-2): THE PROFILE FINGERPRINT — package-neutral cache identity -------------------------
+# Until ARC-06a both cache keys read prof["width_in"] and prof["exposure_in"] — wood-shake course dimensions — out of
+# EVERY resolved profile (F-1: a membrane had to invent them to reach core geometry) and NOTHING ELSE from it (F-2: a
+# package's own setting, e.g. a band width, did not reach the key, so a changed setting was served the stale area).
+#
+# THE CONTRACT. A package's resolved profile is OPAQUE to core. Core never names a setting; it fingerprints the WHOLE
+# resolved profile, together with the roof system that resolved it, as data:
+#   * canonical, type-tagged form: None, bool, int (incl. numpy integers), float (exact: float.hex, so 0.1 and the
+#     next double apart are different; NaN refused), str, Mapping with str keys (sorted), list/tuple (ordered),
+#     set/frozenset (sorted by canonical form) — recursively, any depth;
+#   * the system id rides OUTSIDE the profile dict as well, so two systems can never share a key even if a package
+#     forgot to label its profile;
+#   * SHA-256 over the canonical JSON, prefixed by a format tag ("frame-profile-v1") so a later change of form is a
+#     clean miss, never a collision with an old key.
+# ANY value that cannot be canonicalised (an object, a callable, a non-str key, NaN, a numpy bool …) makes the
+# profile UNFINGERPRINTABLE: the cache is BYPASSED for that call (computed, never stored, never served) — a slower
+# answer is acceptable, a shared answer across unknown semantics is not.
+# Type tags mean 7 and 7.0 are different keys: that can only cost a cache MISS, never return a wrong area.
+class _Unfingerprintable(Exception):
+    """A resolved profile holds a value core cannot canonicalise: do not cache this call."""
+
+
+def _fp_canon(v):
+    if v is None:
+        return ["n"]
+    if isinstance(v, bool):
+        return ["b", v]
+    if isinstance(v, _numbers.Integral):
+        return ["i", int(v)]
+    if isinstance(v, _numbers.Real):
+        f = float(v)
+        if f != f:
+            raise _Unfingerprintable("NaN in a resolved profile")
+        return ["f", f.hex()]
+    if isinstance(v, str):
+        return ["s", v]
+    if isinstance(v, _Mapping):
+        items = []
+        for k in v:
+            if not isinstance(k, str):
+                raise _Unfingerprintable(f"non-string profile key {k!r}")
+            items.append(k)
+        return ["d", [[k, _fp_canon(v[k])] for k in sorted(items)]]
+    if isinstance(v, (list, tuple)):
+        return ["l", [_fp_canon(x) for x in v]]
+    if isinstance(v, (set, frozenset)):
+        return ["S", sorted(_json.dumps(_fp_canon(x), separators=(",", ":")) for x in v)]
+    raise _Unfingerprintable(f"profile value of type {type(v).__name__}")
+
+
+def profile_fingerprint(system_id, prof):
+    """Deterministic, collision-resistant identity of (roof system, fully resolved profile). Raises
+    _Unfingerprintable when the profile holds a value core cannot canonicalise (the callers then bypass the cache)."""
+    canon = ["frame-profile-v1", str(system_id), _fp_canon(prof)]
+    return _hashlib.sha256(_json.dumps(canon, separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+
+
+def _grid_cache_key(facet,pens,nots,res,prof,system_id=None):
+    """The grid depends on the facet, its holes and the resolution only; the profile identity is kept in the key all
+    the same (FRAME v104b K9: grids of two systems are never shared), now as the package-neutral fingerprint
+    (ARC-06a F-1: no course dimension is read). Raises _Unfingerprintable -> the caller computes without caching."""
     return (_poly_key(facet),
             tuple(_poly_key(h) for h in (pens or [])),
             tuple(_poly_key(h) for h in (nots or [])),
             float(res),
-            float(prof["width_in"]), float(prof["exposure_in"]),
-            str(prof["system_id"]))      # FRAME v104b (K9): two systems at the same dimensions are different grids
+            profile_fingerprint(prof.get("system_id") if system_id is None else system_id, prof))
 
 def clear_grid_cache():
     """Drop all cached grids/masks (e.g. between roofs). Purely a memory control:
@@ -425,15 +488,23 @@ def _area_cache_key(facet,valleys,pens,nots,apps,res,prof,return_zone,bands=None
     PREDOMINANT system's measurements, so the same facet, appurtenance and profile can be carved at 21 in
     (as wood shake) or at 6 in (as a membrane). Without this term the first of those two carves would be
     served to the second from cache — a stale area, silently. That is the same defect K9 fixed one layer up,
-    and the docstring above would have gone back to being false."""
+    and the docstring above would have gone back to being false.
+
+    FRAME ARC-06a (F-2): the docstring above was false again in one respect — "the resolved measurements" meant two
+    wood-shake dimensions only, so a package setting that changes the disturbance (a band width) was not in the key and
+    a changed setting was served the stale area (independent QA: 27.3393 SF returned for band_ft=2). The profile is
+    now fingerprinted WHOLE (profile_fingerprint). An unfingerprintable profile raises _Unfingerprintable, which the
+    caller treats exactly like an unhashable input: compute, never cache."""
     return (_poly_key(facet),
             _hashable_valleys(valleys),
             tuple(_poly_key(h) for h in (pens or [])),
             tuple(_poly_key(h) for h in (nots or [])),
             _hashable_apps(apps),
             float(res),
-            float(prof["width_in"]), float(prof["exposure_in"]),
-            str(prof["system_id"]),   # FRAME v104b (K9)
+            # FRAME ARC-06a (F-1/F-2): the WHOLE resolved profile and the system that resolved it, fingerprinted as
+            # opaque data — every package setting reaches the key; no course dimension is required of any package.
+            # (Replaces float(width_in), float(exposure_in), str(system_id); K9's system separation is inside it.)
+            profile_fingerprint(prof.get("system_id"), prof),
             bool(return_zone),
             _band_key(bands),
             None if facet_system_id is None else str(facet_system_id))   # FRAME v106.6c
@@ -444,8 +515,11 @@ def clear_area_cache():
 def _facet_grid(facet,pens,nots,res,prof):
     """Return (gx,gy,X,Y,pts,inside,field) for this facet, from cache when the
     exact same inputs were seen before."""
-    key=_grid_cache_key(facet,pens,nots,res,prof)
-    hit=_GRID_CACHE.get(key)
+    try:
+        key=_grid_cache_key(facet,pens,nots,res,prof)
+    except (_Unfingerprintable, TypeError):
+        key=None                                     # ARC-06a: cannot identify the profile -> compute, never cache
+    hit=_GRID_CACHE.get(key) if key is not None else None
     if hit is not None: return hit
     pf=Path(facet)
     pen_paths=[Path(h) for h in (pens or [])]
@@ -462,8 +536,9 @@ def _facet_grid(facet,pens,nots,res,prof):
     inside=in_facet&~in_pen&~in_not                 # countable shake field
     field =in_facet&~in_not                          # shadow medium
     val=(gx,gy,X,Y,pts,inside,field)
-    if len(_GRID_CACHE)>=_GRID_CACHE_MAX: _GRID_CACHE.clear()
-    _GRID_CACHE[key]=val
+    if key is not None:
+        if len(_GRID_CACHE)>=_GRID_CACHE_MAX: _GRID_CACHE.clear()
+        _GRID_CACHE[key]=val
     return val
 
 def affected_area(facet,valleys,penetrations=None,notches=None,
@@ -507,8 +582,8 @@ def affected_area(facet,valleys,penetrations=None,notches=None,
     try:
         _key=_area_cache_key(facet,valleys,penetrations,notches,appurtenances,res,prof,return_zone,
                              transition_bands,facet_system_id)
-    except TypeError:
-        _key=None                                    # unhashable input -> just compute, never cache
+    except (TypeError, _Unfingerprintable):
+        _key=None                                    # unhashable input / unfingerprintable profile -> compute, never cache
     if _key is not None:
         _hit=_AREA_CACHE.get(_key)
         if _hit is not None:

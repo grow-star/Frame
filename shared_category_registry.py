@@ -96,39 +96,13 @@ CORE_REGISTRY_HASH = "7a86a944c0652eb49e15875e9d9adc1c4cc5bc4d53ba3d90bf18f7855e
 REGISTRY_HASH = "72dc2aee2f78e7e90eda4d4a1c437f4730c922255135371a390cf73931f83da6"   # LEGACY anchor (v74-v96)
 LEGACY_REGISTRY_HASH = REGISTRY_HASH
 
-# FRAME v106.6f — THE HISTORICAL RECEIPT NOW STANDS ON ITS OWN DATA.
-#
-# A2 5.1 records Joseph's requirement 1 verbatim: "Preserve historical registry receipts so existing claims
-# remain verifiable even after additional roofing packages are introduced." v97 met it by keeping the live
-# composite EQUAL to 72dc2aee with only wood_shake loaded, and the note above this block says the lazy shared
-# tier exists so that the assertion "stays literally true rather than being rewritten to stay true."
-#
-# That held for the event v97 was designed for — a PACKAGE being added — because a package's ids and the
-# shared ids are both lazy. It cannot hold when the VOCABULARY grows. A new billable id is reachable with
-# wood shake alone whichever tier it is put in: core is never lazy, and a shared or package-owned id enters
-# the moment the package that bills it declares it. QA checked all three tiers before touching this.
-#
-# A2 5.1 anticipates exactly that and says what should happen: verifiability rests on "the core hash and the
-# wood-shake package hash [being] each still pinned", and "the composite moving is the correct, visible
-# signal that the vocabulary grew."
-#
-# So the receipt is pinned as DATA here, not as an equality with the live registry. LEGACY_REGISTRY_33 is the
-# vocabulary of v74-v96 — the 33 ids any claim of that era was written against — and its fingerprint is
-# 72dc2aee, permanently, however much the live registry grows afterwards. A historical claim stays verifiable
-# because the list it was written against is still here to check against, which is what requirement 1 asks
-# for. The live composite is then free to move, visibly, with its own pinned value.
-#
-# This is a STRONGER form of the same promise: the old assertion survived package growth only, and this one
-# survives both. Nothing about any v74-v96 claim changes.
-LEGACY_REGISTRY_33 = (
-    "APPURT_IWS", "BOX_VENT", "CHIMNEY_CHASE_COVER", "CHIMNEY_FLASH", "DEBRIS_DISPOSAL",
-    "DRIP_EDGE", "ENDWALL_FLASH", "EQUIPMENT", "FIELD_COVERING", "FIELD_FELT",
-    "FIELD_TEAROFF", "FLUE_CAP", "GABLE_CORNICE", "GENERAL_LABOR", "HIGH_SLOPE_CHARGE",
-    "HIP_CAPS", "IWS", "PIPE_JACK_FLASH", "POWER_VENT", "RIDGE_CAPS",
-    "RIDGE_HIP_CAP", "RIDGE_VENT", "ROOFER_LABOR", "SHAKE_FIELD_RR", "SKYLIGHT_FLASH",
-    "STARTER", "STEEP_CHARGE", "STEP_FLASH", "TRANSITION_FLASH", "TURBINE_VENT",
-    "UNMAPPED", "VALLEY_METAL", "VENT_CAP",
-)
+# FRAME v106.6f — THE HISTORICAL RECEIPT NOW STANDS ON ITS OWN DATA. FRAME ARC-04a: that data, the LEGACY_REGISTRY_33
+# tuple, now lives in verification/legacy_registry_receipt.py — moved byte-for-byte with the v106.6f rationale, its
+# 33 ids and order unchanged. No production code ever read it (the purity gate classed it UNREFERENCED); it is the
+# historical receipt a v74-v96 claim is verified against, which is a verification fixture's job, and shipped here it was
+# the one material-term site in this module. REGISTRY_HASH / LEGACY_REGISTRY_HASH above stay: they are live (the
+# carrier parser and manual entry read REGISTRY_HASH), and registry_fingerprint(LEGACY_REGISTRY_33) == REGISTRY_HASH
+# is still asserted, permanently, by two_tier_registry_regression and arc00_anchor_golden_regression.
 
 
 def registry_fingerprint(ids):

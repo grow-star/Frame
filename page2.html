@@ -1166,7 +1166,9 @@
           <div class="covering-bar" id="coveringBar" aria-label="Roof covering by facet">
             <label id="coveringPredominantWrap">Most of the roof <select id="predominantCoveringSelect"></select></label>
             <button class="secondary assign-covering" id="assignCoveringButton" type="button" aria-pressed="false">Assign covering</button>
+            <span class="covering-project-note hidden" id="coveringProjectNote"></span>
             <span class="covering-counts" id="coveringCounts"></span>
+            <span class="covering-exception-note" id="coveringExceptionNote"></span>
             <span class="covering-excluded-note" id="coveringExcludedNote"></span>
           </div>
         </div>
@@ -1186,6 +1188,9 @@
 
       <aside class="panel side-panel">
         <div class="status-box loading visible" id="statusBox">Loading the engine in your browser…</div>
+        <!-- FRAME ARC-06a: events the facet's own roof-system package refused, and held mixed-roof work. Filled ONLY
+             from the engine's scope result (unsupported_operations / held_operations); hidden when there are none. -->
+        <div class="status-box error" id="unresolvedRoofSystemNotice" role="alert" style="display:none"></div>
 
         <div class="compute-controls" id="computeControls">
           <div class="compute-controls-head">
@@ -1296,6 +1301,14 @@
     // requirement — a bridge that predates it (or a test stub) leaves the page exactly as it was.
     import * as RoofBridge from './pyodide_bridge.js';
 
+    // FRAME ARC-03a r1 — FINISH A COMMITTED CLAIM LOAD BEFORE ANYTHING READS THE SESSION. A saved-claim load commits
+    // with one marker key and then settles; if settling could not finish, this page finishes it now — or stops,
+    // showing why — so it never reads a half-written claim (claim_codec.js settleOrStop). The codec is imported only
+    // while a load is pending, so an ordinary visit runs exactly as before.
+    if (sessionStorage.getItem('woodShakeWorkbench.claimLoadTxn') !== null) {
+      (await import('./claim_codec.js')).settleOrStop(sessionStorage, document);
+    }
+
     const state = {
       xmlText: '',
       roofData: null,
@@ -1362,6 +1375,17 @@
       predominantSystem: null,
       facetSystems: new Map(),
       excludedFacets: new Set(),
+      // FRAME ARC-03a — A SCHEMA_VERSION 1 PROJECT (declared on page 1; core/contracts/project_config.py). When
+      // projectConfig is set it is the ONLY material authority on this page: the covering control lists the project's
+      // PROFILES, a facet's covering is resolved with the engine's precedence (facet exception -> its structure's
+      // assignment -> the project default), facet exceptions live in facetProfiles and are written back to the stored
+      // projectConfig, and the payload carries project_config — never the legacy covering keys (see
+      // roofSystemKeysForEngine) nor a shake profile. projectConfig null = a pre-ARC-03a session (legacy mode, unchanged; see the ARC-03a schema
+      // doc, "Transitional paths").
+      projectConfig: null,
+      projectConfigError: '',
+      facetProfiles: new Map(),
+      soffitDepthIn: null,
       assignSystemMode: false,
       registeredSystems: [],
       activePenetrationPopupId: null,
@@ -1451,7 +1475,18 @@
       statusBox.textContent = message;
     }
 
+    // FRAME ARC-06a r2 (independent QA, F-1): while the engine REFUSES the current selection, the named refusal is
+    // the page's standing status. hideStatus() is called after every successful compute AND by initialisation, mode
+    // toggles and prompts; when a refusal is in force it puts the refusal back instead of blanking the box, so a
+    // refresh (restore -> recompute -> boot's hideStatus) or a closed prompt can never leave unexplained zeros on
+    // screen. The refusal is cleared only by a compute that is NOT refused (computed, or nothing selected).
+    let refusalStatusMessage = null;
+
     function hideStatus() {
+      if (refusalStatusMessage && document.body.getAttribute('data-compute-state') === 'refused') {
+        setStatus('error', refusalStatusMessage);
+        return;
+      }
       statusBox.className = 'status-box';
       statusBox.textContent = '';
     }
@@ -1471,9 +1506,32 @@
       }
     }
 
+    // FRAME ARC-03a: the stored project declaration that belongs to THIS payload (bound by project_id), or an error.
+    function bindProjectConfig(payload) {
+      state.projectConfig = null;
+      state.projectConfigError = '';
+      if (!payload || !payload.projectId) return;            // a pre-ARC-03a payload: legacy mode
+      let cfg = null;
+      try { cfg = JSON.parse(sessionStorage.getItem('woodShakeWorkbench.projectConfig') || 'null'); }
+      catch (_e) { cfg = null; }
+      if (!cfg || cfg.schema_version !== 1 || cfg.project_id !== payload.projectId || !cfg.materials) {
+        state.projectConfigError = 'This roof belongs to a project whose roof-system declaration is missing or does '
+          + 'not match. Go back to page 1 and declare the project again — nothing is computed without it.';
+        return;
+      }
+      state.projectConfig = cfg;
+      state.facetProfiles = new Map(Object.entries(cfg.materials.by_facet || {}).map(([k, v]) => [String(k), String(v)]));
+      state.soffitDepthIn = (payload.soffitDepthIn == null || payload.soffitDepthIn === '') ? null : Number(payload.soffitDepthIn);
+      state.shakeMeasurements = null;                         // never a profile source in a declared project
+    }
+
+    function isProjectMode() { return !!state.projectConfig; }
+
     async function getXmlText() {
       const payload = readPage1Payload();
-      if (payload && payload.shakeMeasurements) state.shakeMeasurements = payload.shakeMeasurements;
+      bindProjectConfig(payload);
+      if (state.projectConfigError) throw new Error(state.projectConfigError);
+      if (!isProjectMode() && payload && payload.shakeMeasurements) state.shakeMeasurements = payload.shakeMeasurements;
       if (payload && typeof payload.xmlText === 'string' && payload.xmlText.trim()) {
         return payload.xmlText;
       }
@@ -1494,7 +1552,13 @@
       'BOX_VENT', 'CHIMNEY_FLASH', 'ENDWALL_FLASH', 'PIPE_JACK_FLASH', 'POWER_VENT', 'RIDGE_VENT',
       'SKYLIGHT_FLASH', 'STEP_FLASH', 'TRANSITION_FLASH', 'TURBINE_VENT', 'VENT_CAP'
     ];
-    const REGISTRY_LABEL = {
+    // FRAME ARC-06a (B3) — NO PAGE-SIDE CATEGORY LIST. Which ids this page labels, and their labels, come from the
+    // ENGINE (bridge.categorySurfaces: the composite registry minus the four v74 receive-only ids, which the required
+    // scope never emits). Until ARC-06a this was a LITERAL copy frozen at the wood-shake vocabulary (B3: it lacked
+    // MODBIT_FIELD_RR, MODBIT_PATCH, COUNTERFLASHING, SKYLIGHT_UNIT). EMPTY until loadCategorySurfaces fills it.
+    const REGISTRY_LABEL = {};
+    // Presentation wording ONLY — this page's own words ("Box / turtle vent"); it can neither add nor remove an id.
+    const REGISTRY_LABEL_WORDING = {
       SHAKE_FIELD_RR:'Wood shake field', VALLEY_METAL:'Valley metal', PIPE_JACK_FLASH:'Pipe jack flashing',
       GENERAL_LABOR:'General labor', CHIMNEY_FLASH:'Chimney flashing', STEP_FLASH:'Step flashing',
       ENDWALL_FLASH:'Endwall flashing', TRANSITION_FLASH:'Transition flashing', SKYLIGHT_FLASH:'Skylight flashing',
@@ -1962,12 +2026,17 @@
         rings = rings.filter((r) => Array.isArray(r) && r.length >= 3);
         if (rings.length === 0) continue;
         const d = rings.map((ring) => 'M' + ring.map((pt) => { const q = tx(pt); return q[0].toFixed(2) + ',' + q[1].toFixed(2); }).join('L') + 'Z').join(' ');
-        affectedLayer.appendChild(makeSvgEl('path', { class: 'affected', d: d, 'fill-rule': 'evenodd' }));
+        // FRAME ARC-06a r1: each drawn zone names its event and facet (what the engine computed, and where)
+        affectedLayer.appendChild(makeSvgEl('path', { class: 'affected', d: d, 'fill-rule': 'evenodd',
+          'data-event-label': String(event.event_label || ''), 'data-facet-id': String(event.facet_id || '') }));
         const c = tx(centroid(rings[0]));
         const label = makeSvgEl('text', { class: 'affected-label', x: c[0].toFixed(2), y: c[1].toFixed(2) });
         const sf = Number(event.affected_SF || event.affected_sf || 0);
         const ea = Number(event.shake_count || event.shakes || 0);
-        label.textContent = `${sf.toFixed(1)} SF · ${Math.round(ea)} EA`;
+        // FRAME ARC-06a r1: a piece count is a wood-shake rule; on a facet whose covering declares none (e.g. MODBIT,
+        // piece_count_applicable === false) the zone shows its area only — never "0 EA" as if it were a shake count.
+        label.textContent = event.piece_count_applicable === false ? `${sf.toFixed(1)} SF`
+                                                                    : `${sf.toFixed(1)} SF · ${Math.round(ea)} EA`;
         affectedLayer.appendChild(label);
       }
     }
@@ -2462,37 +2531,99 @@
     //     the shape it had before v105.5 (every saved claim keeps working).
     //   * an exception naming the predominant covering is DROPPED — one roof, one shape.
     function coveringSystems() {
+      if (isProjectMode()) return projectProfileRows();
       return Array.isArray(state.registeredSystems) ? state.registeredSystems : [];
     }
 
-    function coveringIsInstalled(systemId) {
-      return coveringSystems().some((row) => row.system_id === systemId);
+    // FRAME ARC-03a: what the covering control is BUILT ON — a row's profile id in a declared project, its system id
+    // in legacy mode. Every function below keys the control through this one helper.
+    function rowKey(row) { return isProjectMode() ? row.profile_id : row.system_id; }
+
+    // ARC-03a: the project's declared PROFILES as the control's rows, labelled from what page 1 recorded (which came
+    // from the engine's registry). Two profiles of one system are told apart by their id.
+    function projectProfileRows() {
+      const profiles = (state.projectConfig.materials && state.projectConfig.materials.profiles) || {};
+      const ids = Object.keys(profiles).sort();
+      const bySystem = {};
+      ids.forEach((pid) => { const sid = profiles[pid].system_id; bySystem[sid] = (bySystem[sid] || 0) + 1; });
+      return ids.map((pid) => ({
+        profile_id: pid, system_id: String(profiles[pid].system_id),
+        label: String(profiles[pid].label || profiles[pid].system_id) + (bySystem[profiles[pid].system_id] > 1 ? ' (' + pid + ')' : '')
+      }));
     }
 
-    function coveringLabel(systemId) {
-      const row = coveringSystems().find((r) => r.system_id === systemId);
-      return (row && row.label) || String(systemId || '');
+    function structureOfFacet(faceId) {
+      const fs = (state.projectConfig && state.projectConfig.source && state.projectConfig.source.facet_structures) || {};
+      return fs[String(faceId)] || '';
     }
 
-    function coveringIndex(systemId) {
-      return coveringSystems().findIndex((row) => row.system_id === systemId);
+    function coveringIsInstalled(key) {
+      return coveringSystems().some((row) => rowKey(row) === key);
+    }
+
+    function coveringLabel(key) {
+      const row = coveringSystems().find((r) => rowKey(r) === key);
+      return (row && row.label) || String(key || '');
+    }
+
+    function coveringIndex(key) {
+      return coveringSystems().findIndex((row) => rowKey(row) === key);
     }
 
     // The covering every facet carries unless it is an exception. The DECLARED one when the user chose;
     // otherwise, with exactly ONE covering installed, that one (there is nothing to choose). With two or more
     // installed and none declared there is NO default — never the first in the list.
+    // ARC-03a: in a declared project this is the PROJECT DEFAULT profile (page 1), or null.
     function effectivePredominantSystem() {
+      if (isProjectMode()) return (state.projectConfig.materials && state.projectConfig.materials.default) || null;
       if (state.predominantSystem) return state.predominantSystem;
       const systems = coveringSystems();
       return systems.length === 1 ? systems[0].system_id : null;
     }
 
+    // ARC-03a: what a facet carries WITHOUT its own exception — the engine's precedence below the facet level:
+    // its structure's assignment, else the project default (never anything else). Legacy: the predominant.
+    function inheritedCovering(faceId) {
+      if (!isProjectMode()) return effectivePredominantSystem();
+      const m = state.projectConfig.materials || {};
+      const sid = structureOfFacet(faceId);
+      return (sid && m.by_structure && m.by_structure[sid]) || m.default || null;
+    }
+
+    // ARC-03a: roof facets that resolve to nothing — a STOP, never a zero. Excluded facets count: an exclusion takes a
+    // facet out of the scope, not off the roof, and the engine still asks its covering at a system boundary (the same
+    // rule as project_config.validate_project_config).
+    function undeclaredFacets() {
+      if (!isProjectMode()) return [];
+      return ((state.roofData && state.roofData.facets) || []).map((f) => String(f.facet_id))
+        .filter((id) => !facetCovering(id));
+    }
+
     function coveringChoiceRequired() {
+      if (isProjectMode()) return undeclaredFacets().length > 0;
       return coveringSystems().length >= 2 && !state.predominantSystem;
     }
 
     function facetCovering(faceId) {
+      if (isProjectMode()) return state.facetProfiles.get(String(faceId)) || inheritedCovering(faceId);
       return state.facetSystems.get(String(faceId)) || effectivePredominantSystem();
+    }
+
+    // ARC-03a: the stored declaration is the ONE authority — every facet-exception change is written back to it at
+    // once, so back navigation, reload and page 1 all read the same thing. The confirmed claim keeps the copy it was
+    // computed with; page 4 refuses to export when the two differ (stale work).
+    function persistProjectConfig() {
+      if (!isProjectMode()) return;
+      const byFacet = {};
+      Array.from(state.facetProfiles.keys()).sort(naturalCompare).forEach((k) => { byFacet[k] = state.facetProfiles.get(k); });
+      state.projectConfig.materials.by_facet = byFacet;
+      try { sessionStorage.setItem('woodShakeWorkbench.projectConfig', JSON.stringify(state.projectConfig)); }
+      catch (_e) { /* storage full: the payload still carries the declaration to the engine */ }
+    }
+
+    function projectHeaderForEngine() {
+      persistProjectConfig();
+      return JSON.parse(JSON.stringify(state.projectConfig));
     }
 
     // FRAME v106.2 — is this facet outside the claim's scope? Asked wherever a covering is asked for, so an
@@ -2541,6 +2672,9 @@
     }
 
     // §1c — the emission. Spread into buildUiSelection(). ABSENT when nothing is declared.
+    // ARC-03a: in a declared project predominantSystem stays null and facetSystems stays empty (their setters refuse
+    // or route to facetProfiles), so this emits ONLY the exclusions; the materials ride as project_config
+    // (projectKeysForEngine).
     function roofSystemKeysForEngine() {
       const out = {};
       if (state.predominantSystem) out.predominant_system_id = state.predominantSystem;
@@ -2560,6 +2694,25 @@
       return out;
     }
 
+    // FRAME ARC-06a (B3): fill the label map from the engine (the ONE category authority).
+    async function loadCategorySurfaces() {
+      try {
+        if (typeof RoofBridge.categorySurfaces !== 'function') throw new Error('categorySurfaces unavailable');
+        const surf = await RoofBridge.categorySurfaces();
+        if (!surf || !Array.isArray(surf.page2_ids) || !surf.page2_ids.length) throw new Error('no categories');
+        for (const k of Object.keys(REGISTRY_LABEL)) delete REGISTRY_LABEL[k];
+        for (const id of surf.page2_ids.map(String)) {
+          REGISTRY_LABEL[id] = REGISTRY_LABEL_WORDING[id] || String((surf.page2_labels || {})[id] || id);
+        }
+        document.body.setAttribute('data-category-surfaces', 'engine');
+        // the ids this surface now labels, in order — read by the browser proofs (an execution-based check that the
+        // page shows EXACTLY the engine's surface; registry_all_package_drift_gate judges the same rule statically)
+        document.body.setAttribute('data-category-label-ids', JSON.stringify(Object.keys(REGISTRY_LABEL)));
+      } catch (_e) {
+        document.body.setAttribute('data-category-surfaces', 'unavailable');
+      }
+    }
+
     async function loadRegisteredSystems() {
       let rows = [];
       try {
@@ -2575,12 +2728,13 @@
     function coveringCountsText() {
       const counts = new Map();
       for (const facet of (state.roofData && state.roofData.facets) || []) {
+        if (isProjectMode() && isFacetExcluded(facet.facet_id)) continue;   // ARC-03a: an exclusion is not a covering
         const sys = facetCovering(facet.facet_id) || '';
         counts.set(sys, (counts.get(sys) || 0) + 1);
       }
       const parts = [];
       for (const row of coveringSystems()) {
-        if (counts.get(row.system_id)) parts.push([row.system_id, `${row.label} ${counts.get(row.system_id)}`]);
+        if (counts.get(rowKey(row))) parts.push([rowKey(row), `${row.label} ${counts.get(rowKey(row))}`]);
       }
       for (const [sys, n] of counts.entries()) {
         if (!coveringIsInstalled(sys)) parts.push([sys, `${sys ? coveringLabel(sys) : 'not chosen'} ${n}`]);
@@ -2599,7 +2753,25 @@
       // (ledger entry 119, QA error 70). Nothing is defaulted by showing it: the "most of the roof"
       // selector is HIDDEN when there is nothing to choose, and the emission still needs a tap.
       if (coveringBar) coveringBar.classList.toggle('visible', !!state.roofData && systems.length >= 1);
-      if (coveringPredominantWrap) coveringPredominantWrap.classList.toggle('hidden', !multi);
+      if (coveringPredominantWrap) coveringPredominantWrap.classList.toggle('hidden', !multi || isProjectMode());
+      const projectNote = document.getElementById('coveringProjectNote');
+      if (projectNote) {
+        projectNote.classList.toggle('hidden', !isProjectMode());
+        if (isProjectMode()) {
+          const m = state.projectConfig.materials || {};
+          const parts = ['Project default: ' + (m.default ? coveringLabel(m.default) : 'none declared')];
+          for (const [sid, pid] of Object.entries(m.by_structure || {}).sort()) parts.push(sid + ': ' + coveringLabel(pid));
+          projectNote.textContent = parts.join(' · ') + ' (declared on page 1)';
+        }
+      }
+      const exceptionNote = document.getElementById('coveringExceptionNote');
+      if (exceptionNote) {
+        const ex = isProjectMode()
+          ? Array.from(state.facetProfiles.entries()).sort((a, b) => naturalCompare(a[0], b[0]))
+              .map(([f, pid]) => faceLabel(f) + ' → ' + coveringLabel(pid))
+          : [];
+        exceptionNote.textContent = ex.length ? 'Facet exceptions: ' + ex.join(', ') : '';
+      }
       if (predominantCoveringSelect) {
         predominantCoveringSelect.innerHTML = '';
         if (!state.predominantSystem) {
@@ -2607,7 +2779,7 @@
           blank.value = ''; blank.textContent = '— choose —';
           predominantCoveringSelect.appendChild(blank);
         }
-        for (const row of systems) {
+        for (const row of (isProjectMode() ? [] : systems)) {
           const opt = document.createElement('option');
           opt.value = row.system_id; opt.textContent = row.label;
           predominantCoveringSelect.appendChild(opt);
@@ -2631,7 +2803,7 @@
         coveringCountsText().forEach(([sys, text], i) => {
           if (i) coveringCounts.appendChild(document.createTextNode(' · '));
           const item = document.createElement('span');
-          item.setAttribute('data-covering', sys);
+          item.setAttribute(isProjectMode() ? 'data-profile' : 'data-covering', sys);
           const sw = document.createElement('span');
           const idx = coveringIndex(sys);
           sw.className = 'covering-swatch ' + (idx < 0 ? 'covering-unassigned' : `covering-${idx % 6}`);
@@ -2653,6 +2825,20 @@
       if (!required) return;
       const card = document.createElement('div');
       card.className = 'covering-choice-card';
+      if (isProjectMode()) {
+        // ARC-03a: an undeclared facet is a STOP. Page 2 never picks a default; page 1 owns the project declaration.
+        const t = document.createElement('div');
+        t.setAttribute('data-undeclared', undeclaredFacets().join(','));
+        t.textContent = 'No roof system is declared for ' + undeclaredFacets().map(faceLabel).join(', ')
+          + '. Nothing is computed until it is. Declare the project\u2019s roof system on page 1, or assign / exclude '
+          + 'these facets.';
+        card.appendChild(t);
+        const back = document.createElement('a');
+        back.href = './index.html'; back.className = 'secondary covering-picker-option'; back.textContent = '← Page 1';
+        card.appendChild(back);
+        coveringChoiceOverlay.appendChild(card);
+        return;
+      }
       const title = document.createElement('div');
       title.textContent = 'Which covering is MOST of this roof? Facets that differ can be assigned next.';
       card.appendChild(title);
@@ -2668,7 +2854,7 @@
     }
 
     function setPredominantSystem(systemId) {
-      if (state.busy) return;
+      if (state.busy || isProjectMode()) return;   // ARC-03a: a declared project's default is page 1's
       state.predominantSystem = systemId ? String(systemId) : null;
       closeCoveringPicker();
       hideStatus();
@@ -2737,12 +2923,15 @@
       const excluded = isFacetExcluded(id);
       const current = excluded ? null : facetCovering(id);
       for (const row of coveringSystems()) {
+        const key = rowKey(row);
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'secondary covering-picker-option' + (row.system_id === current ? ' current' : '');
-        b.setAttribute('data-system-id', row.system_id);
-        b.textContent = row.label + (row.system_id === effectivePredominantSystem() ? ' (most of the roof)' : '');
-        b.addEventListener('click', () => setFacetCovering(id, row.system_id));
+        b.className = 'secondary covering-picker-option' + (key === current ? ' current' : '');
+        b.setAttribute(isProjectMode() ? 'data-profile-id' : 'data-system-id', key);
+        b.textContent = row.label + (isProjectMode()
+          ? (key === inheritedCovering(id) ? ' (' + (structureOfFacet(id) && (state.projectConfig.materials.by_structure || {})[structureOfFacet(id)] ? structureOfFacet(id) + ' assignment' : 'project default') + ')' : '')
+          : (key === effectivePredominantSystem() ? ' (most of the roof)' : ''));
+        b.addEventListener('click', () => setFacetCovering(id, key));
         popup.appendChild(b);
       }
       // FRAME v106.2 — THE EXCLUSION, as its own choice and NOT an entry in the covering list. It is not a
@@ -2763,7 +2952,13 @@
     function setFacetCovering(faceId, systemId) {
       if (state.busy) return;
       const id = String(faceId);
-      if (!systemId || systemId === effectivePredominantSystem()) state.facetSystems.delete(id);
+      if (isProjectMode()) {
+        // ARC-03a: choosing what the facet already inherits REMOVES its exception (one roof, one shape).
+        if (!systemId || systemId === inheritedCovering(id)) state.facetProfiles.delete(id);
+        else state.facetProfiles.set(id, String(systemId));
+        state.excludedFacets.delete(id);
+        persistProjectConfig();
+      } else if (!systemId || systemId === effectivePredominantSystem()) state.facetSystems.delete(id);
       else state.facetSystems.set(id, String(systemId));
       // FRAME v106.2: choosing a covering puts the facet back IN scope. The engine raises on a facet that is
       // in both keys, so the mutual exclusion is enforced at BOTH setters, not just one.
@@ -2799,9 +2994,11 @@
       if (on) {
         state.excludedFacets.add(id);
         state.facetSystems.delete(id);
+        state.facetProfiles.delete(id);   // ARC-03a: an override never keeps an excluded facet in scope
       } else {
         state.excludedFacets.delete(id);
       }
+      persistProjectConfig();
       closeCoveringPicker();
       handleSelectionChanged();
       if (state.assignSystemMode) {
@@ -4273,6 +4470,7 @@
           state.lastDiagramData = diagram;
           updateUserAppCarveFromDiagram(diagram);
           if (result.scope) {
+            renderUnresolvedRoofSystemNotice(result.scope);   // FRAME ARC-06a
             renderFieldTile(result.scope);          // FRAME v98: the field covering in its own unit
             totalSF.textContent = Number(result.scope.total_SF || 0).toFixed(1);
             valleyLF.textContent = Number(result.scope.valley_LF || 0).toFixed(2);
@@ -4337,7 +4535,7 @@
         const claimState = {
           xmlText: state.xmlText,
           uiSelection: uiSelection,                       // confirmed selection (valleys, facet sides, penetrations, appurtenances)
-          shakeMeasurements: state.shakeMeasurements || page1.shakeMeasurements || null,
+          shakeMeasurements: isProjectMode() ? null : (state.shakeMeasurements || page1.shakeMeasurements || null),
           carrierEstimatePresent: carrierEstimatePresent, // page-1 "Carrier Estimate (optional)" was attached
           estimateText: page1.estimateText || '',         // Layer A input for page 3 ('' -> manual entry)
           page2Scope: {                                   // page-2 numbers so page 3 can verify the required scope matches
@@ -5101,19 +5299,28 @@
         // v71 DEFECT 3: eave ice & water — the user's code/existing assertion (either or both).
         // Soffit depth is measured on page 1 and rides along so the engine sets coverage + layers.
         eave_iws: eaveIwsRowForEngine(),
-        soffit_depth_in: (state.shakeMeasurements && state.shakeMeasurements.soffit_depth_in != null)
-                          ? state.shakeMeasurements.soffit_depth_in : null,
+        soffit_depth_in: isProjectMode() ? state.soffitDepthIn     // ARC-03a: page 1's roof measurement
+          : ((state.shakeMeasurements && state.shakeMeasurements.soffit_depth_in != null)
+             ? state.shakeMeasurements.soffit_depth_in : null),
         // FRAME v106.6g2 / B2 — the user's explicit confirmations, as KEYS ONLY. The page sends no
         // verdict: the engine recomputes which items are suspicious and matches these keys against
         // the facts it just measured. A key that no longer matches authorises nothing, so a stale or
         // tampered payload leaves its item unresolved rather than silently accepted.
         appurtenance_reviews: reviewRowsForEngine(),
         xml_text: state.xmlText,
-        shake_measurements: state.shakeMeasurements,
+        // FRAME ARC-03a: a declared project sends no legacy profile key at all (the seam refuses one beside it).
+        ...(isProjectMode() ? {} : { shake_measurements: state.shakeMeasurements }),
         // FRAME v105.5: which covering is on which facet — the registry's two keys, each
         // present ONLY when the user declared it (roofSystemKeysForEngine). Nothing declared -> nothing here.
-        ...roofSystemKeysForEngine()
+        ...roofSystemKeysForEngine(),
+        // FRAME ARC-03a: a declared project's ONE material authority, its ProjectConfig header — the LAST key (the
+        // saved-claim codec rebuilds the selection in this order). Absent in legacy mode.
+        ...projectKeysForEngine()
       };
+    }
+
+    function projectKeysForEngine() {
+      return isProjectMode() ? { project_config: projectHeaderForEngine() } : {};
     }
 
     // v71 DEFECT 3: the eave ice & water assertion. Two independent checkboxes; either or both fire it.
@@ -5131,7 +5338,8 @@
       const el = document.getElementById('eaveIwsWarning');
       if (!el) return;
       const asserted = !!eaveIwsRowForEngine();
-      const haveSoffit = !!(state.shakeMeasurements && state.shakeMeasurements.soffit_depth_in != null);
+      const haveSoffit = isProjectMode() ? state.soffitDepthIn != null
+        : !!(state.shakeMeasurements && state.shakeMeasurements.soffit_depth_in != null);
       if (asserted && !haveSoffit) {
         el.textContent = 'No soffit depth was measured on page 1 — eave ice & water is estimated at ONE layer (a 12" soffit). Measure the soffit and re-enter it on page 1 for an exact coverage width and layer count.';
         el.style.display = '';
@@ -5259,6 +5467,7 @@
         || state.ridgeVents.size > 0 || state.highSlopeFacets.size > 0 || state.noHighSlope
         || state.replacedFacets.size > 0
         || state.facetSystems.size > 0
+        || state.facetProfiles.size > 0                                       // ARC-03a
         || state.excludedFacets.size > 0                                      // v106.2
         || (state.userAppurtenances || []).length > 0
         || Object.values(state.penetrationDefinitions || {}).some((d) => d && d.repairEvent === true);
@@ -5286,9 +5495,54 @@
       return (Math.round(Number((n * 100).toPrecision(12))) / 100).toFixed(2);
     }
     function fieldUnitWord(unit) { return unit === 'SQ' ? 'squares' : unit === 'EA' ? 'shakes' : String(unit); }
+    // FRAME ARC-06a: what the engine REFUSED (a facet's own package has no rule for the event — e.g. a membrane valley
+    // repair) or HELD (mixed-roof work awaiting an owner ruling). Shown verbatim from the scope result; the page decides
+    // nothing. Page 4 refuses to export while either list is non-empty (workbench_seam.scope_export_gate).
+    function renderUnresolvedRoofSystemNotice(scope) {
+      const box = document.getElementById('unresolvedRoofSystemNotice');
+      if (!box) return;
+      const uo = (scope && Array.isArray(scope.unsupported_operations)) ? scope.unsupported_operations : [];
+      const ho = (scope && Array.isArray(scope.held_operations)) ? scope.held_operations : [];
+      box.innerHTML = '';
+      if (!uo.length && !ho.length) { box.style.display = 'none'; box.removeAttribute('data-count'); return; }
+      box.style.display = 'block';
+      box.setAttribute('data-count', String(uo.length + ho.length));
+      const head = document.createElement('div');
+      head.textContent = 'Not computed — this claim cannot be exported until these are resolved:';
+      box.appendChild(head);
+      const ul = document.createElement('ul');
+      for (const u of uo) {
+        const li = document.createElement('li');
+        li.setAttribute('data-unsupported-facet', String(u.face_id || ''));
+        li.setAttribute('data-unsupported-system', String(u.system_id || ''));
+        li.textContent = (u.kind === 'PACKAGE_REFUSED' ? 'Not supported by ' + (u.system_id || '') + ': ' : 'Spans two roof systems: ')
+          + (u.designator || u.face_id || '') + ' — ' + (u.event || '') + '. ' + String(u.reason || '');
+        ul.appendChild(li);
+      }
+      for (const h of ho) {
+        const li = document.createElement('li');
+        li.setAttribute('data-held-operation', String(h.operation || ''));
+        li.setAttribute('data-held-system', String(h.system_id || ''));
+        li.textContent = 'Held for an owner decision: ' + String(h.reason || h.operation || '');
+        ul.appendChild(li);
+      }
+      box.appendChild(ul);
+    }
+
     function renderFieldTile(scope) {
       const label = document.getElementById('fieldTileLabel');
       state.lastScopeTotalEA = Math.round(Number((scope && scope.total_EA) || 0));   // the claim-state value, unchanged
+      // FRAME ARC-06a r1: field covering from two or more roof systems — each system's own figures under its own
+      // package label, side by side (never summed, never one picked). The bridge sends field_by_system only then.
+      const bySys = (scope && Array.isArray(scope.field_by_system)) ? scope.field_by_system : [];
+      if (bySys.length > 1) {
+        label.textContent = 'Field covering, per roof system';
+        totalEA.textContent = bySys.map((s) => String(s.label) + ': ' + (s.figures || [])
+          .map((f) => fmtFieldQty(f[0], f[1]) + ' ' + fieldUnitWord(f[1])).join(' + ')).join(' · ');
+        totalEA.setAttribute('data-field-by-system', JSON.stringify(bySys.map((s) => [s.system_id, s.figures])));
+        return;
+      }
+      totalEA.removeAttribute('data-field-by-system');
       const q = scope ? scope.field_qty : null;
       const u = scope ? scope.field_unit : null;
       if (q === null || q === undefined || !u) {
@@ -5492,6 +5746,8 @@
 
       if (!selectionHasRepairEvents(uiSelection)) {
         state.transitionAuto = new Set();      // nothing selected -> nothing can sweep a transition
+        refusalStatusMessage = null;           // ARC-06a r2: nothing selected is not a refusal
+        document.body.setAttribute('data-compute-state', 'computed');
         resetTotals();
         computePenetrationZoneStatus({ events: [] });
         state.selectionChangedSinceLastCompute = false;
@@ -5514,6 +5770,7 @@
         renderSlopePanel();                        // which facets now carry affected area -> which tiers charge
         await refreshTransitionAuto(uiSelection);   // which transitions Path A auto-included
         updateUserAppCarveFromDiagram(diagram);
+        renderUnresolvedRoofSystemNotice(scope);   // FRAME ARC-06a: refused / held work, named
         renderFieldTile(scope);                    // FRAME v98: the field covering in its own unit
         totalSF.textContent = Number(scope.total_SF || 0).toFixed(1);
         valleyLF.textContent = Number(scope.valley_LF || 0).toFixed(2);
@@ -5536,9 +5793,19 @@
         updateSelectedChips();
         computePenetrationZoneStatus(diagram);
         updateComputeUi();
+        refusalStatusMessage = null;           // ARC-06a r2: a computed selection clears the standing refusal
+        document.body.setAttribute('data-compute-state', 'computed');
         hideStatus();
       } catch (error) {
-        setStatus('error', error && error.message ? error.message : 'The engine could not update the selected events.');
+        // FRAME ARC-06a r1 (independent QA r0 §5): when the engine REFUSES the whole selection (e.g. a transition across
+        // two roof systems — a named SYSTEM BOUNDARY, owner question Q-E3), the previous picture must not stay on
+        // screen beside the error looking like a computed repair. Clear the zones and totals: nothing is computed.
+        resetTotals();
+        renderUnresolvedRoofSystemNotice(null);
+        document.body.setAttribute('data-compute-state', 'refused');
+        refusalStatusMessage = 'Not computed — nothing on the roof is shaded or counted until this is resolved. '
+          + (error && error.message ? error.message : 'The engine could not update the selected events.');
+        setStatus('error', refusalStatusMessage);
         updateComputeUi();
       } finally {
         setTotalsComputing(false);
@@ -5654,6 +5921,10 @@
           // without the engine having said so, which is the whole failure this review exists to
           // prevent. A pre-B2r1 snapshot simply has no key here, which reads as "nothing confirmed".
           reviewConfirmations: Array.from(state.reviewConfirmations.keys()).map(String),
+          // FRAME ARC-03a r2: the eave ice & water answer (two checkboxes) is part of the confirmed selection
+          // (eave_iws), so it is part of the workbench too — before r2 it was not saved, and going back to page 2 lost
+          // it. A pre-r2 snapshot has no key, which reads as "not asserted", exactly as before.
+          eaveIws: eaveIwsRowForEngine(),
           savedAt: new Date().toISOString()
         };
         sessionStorage.setItem(RESTORE_KEY, JSON.stringify(snapshot));
@@ -5701,8 +5972,10 @@
       state.noHighSlope = Boolean(snapshot.noHighSlope);
       state.replacedFacets = new Set((snapshot.replacedFacets || []).map(String));
       // FRAME v105.5: READ what was declared — an old snapshot has neither key, so nothing is declared.
-      state.predominantSystem = snapshot.predominantSystem ? String(snapshot.predominantSystem) : null;
-      state.facetSystems = new Map((snapshot.facetSystems || [])
+      // ARC-03a: in a declared project the covering declaration is the stored projectConfig (bound on load), never the
+      // snapshot; only the exclusions (page-2 selection state) come back from it.
+      state.predominantSystem = (!isProjectMode() && snapshot.predominantSystem) ? String(snapshot.predominantSystem) : null;
+      state.facetSystems = new Map((isProjectMode() ? [] : (snapshot.facetSystems || []))
         .map(([k, v]) => [String(k), String(v || '')])
         .filter(([, v]) => v));
       // FRAME v106.2: a pre-v106.2 snapshot has no key, which reads as "nothing excluded". Any facet that
@@ -5710,7 +5983,7 @@
       // restored snapshot must never be a selection the engine will reject.
       state.excludedFacets = new Set((snapshot.excludedFacets || [])
         .map(String)
-        .filter((id) => !state.facetSystems.has(id)));
+        .filter((id) => !state.facetSystems.has(id) && !state.facetProfiles.has(id)));
       state.userAppurtenances = Array.isArray(snapshot.userAppurtenances) ? snapshot.userAppurtenances : [];
       // B2r1 / B2-F02: rehydrate the explicit size/label answers, then let the ENGINE revalidate them.
       //
@@ -5730,6 +6003,14 @@
         (Array.isArray(snapshot.reviewConfirmations) ? snapshot.reviewConfirmations : [])
           .filter((k) => typeof k === 'string' && /^[0-9a-f]{32}$/i.test(k))
           .map((k) => [String(k).toLowerCase(), true]));
+      // FRAME ARC-03a r2: the eave ice & water answer comes back with the rest of the workbench.
+      if (snapshot.eaveIws && typeof snapshot.eaveIws === 'object') {
+        const code = document.getElementById('eaveIwsCode');
+        const existing = document.getElementById('eaveIwsExisting');
+        if (code) code.checked = snapshot.eaveIws.code === true;
+        if (existing) existing.checked = snapshot.eaveIws.existing === true;
+        updateEaveIwsWarning();
+      }
       pruneEmptySelections();
 
       // Reflect restored inputs in the UI, then recompute through the SAME path the app uses,
@@ -5753,7 +6034,21 @@
       try {
         await ready();
         await loadRegisteredSystems();      // FRAME v105.5: the installed coverings — from the engine, never a literal
+        await loadCategorySurfaces();       // FRAME ARC-06a (B3): the category labels — from the engine, never a literal
         state.xmlText = await getXmlText();
+        // FRAME ARC-03a: a declared project is validated by THE Python validator before anything is drawn or computed.
+        // An unsupported or malformed declaration (an uninstalled system, a bad profile, another roof's ids) STOPS the
+        // page with the engine's own message. An undeclared facet is not fatal here: the covering bar's stop names it.
+        if (isProjectMode()) {
+          if (typeof RoofBridge.validateProjectConfig !== 'function') {
+            throw new Error('This engine build cannot validate the project declaration, so nothing is computed.');
+          }
+          const verdict = await RoofBridge.validateProjectConfig(state.xmlText, state.projectConfig, null);
+          if (!verdict || (!verdict.ok && !verdict.missing_declaration)) {
+            throw new Error('The project declaration was refused: ' + ((verdict && verdict.error) || 'unknown error')
+              + ' Go back to page 1 and declare the project again.');
+          }
+        }
         state.roofData = await roofLayout(state.xmlText);
 
         const facets = Array.isArray(state.roofData.facets) ? state.roofData.facets.length : 0;
@@ -5841,6 +6136,8 @@
       state.facetSystems.clear();
       state.excludedFacets.clear();                                            // v106.2
       state.predominantSystem = null;
+      state.facetProfiles.clear();                                             // ARC-03a: page 2's own exceptions;
+      persistProjectConfig();                                                  // page 1's declaration is untouched
       setAssignSystemMode(false);
       handleSelectionChanged();
       renderReplacementPanel();

@@ -167,6 +167,30 @@ def _expand_scope(iface, *args, **kwargs):
     return expand_scope(iface, *args, **kwargs)
 
 
+def _field_piece_count(affected_SF, repair_factor, measured_profile):
+    """FRAME ARC-05a: the package operation `field_piece_count`, as registered with core — how many SHAKES an
+    affected area takes. It is module2_scope_expansion._shake_count, reached at call time (the same cycle reason as
+    _expand_scope), read from the MEASURED PROFILE the caller holds: width and exposure from the profile, each falling
+    back to this package's own legacy default (7 in / 10 in) when the profile does not carry it. That is exactly what
+    workbench_diagram_data computed when it imported _shake_count directly (its `float(sm.get("width_in", 7.0))`
+    and `sm.get("exposure_in", 10.0)` at the call sites), so every diagram count is unchanged; the two numbers now
+    come from this package instead of a core module's literals."""
+    from module2_scope_expansion import _shake_count
+    p = measured_profile or {}
+    return _shake_count(affected_SF, repair_factor, float(p.get("width_in", SHAKE_WIDTH_IN)),
+                        float(p.get("exposure_in", EXPOSURE_IN)))
+
+
+def _roof_eave_ice_and_water(eave_LF, soffit_depth_in, basis):
+    """FRAME ARC-05a: the package operation `roof_eave_ice_and_water`, as registered with core — the ROOF-LEVEL eave
+    ice & water line: (coverage_SF, layers, defaulted, citation). It composes module2_scope_expansion's
+    eave_iws_coverage and _eave_iws_citation exactly as module2_assembly did when it imported them directly (package
+    isolation exception E2); the coverage rule, the layer rule and the citation text are unchanged and stay here."""
+    from module2_scope_expansion import eave_iws_coverage, _eave_iws_citation
+    coverage, layers, defaulted = eave_iws_coverage(eave_LF, soffit_depth_in)
+    return coverage, layers, defaulted, _eave_iws_citation(basis)
+
+
 def _course_top_ft(profile, courses=None):
     """FRAME v105.4: wood shake's OWN course geometry, as registered with core — the top of course n is (n-1) x exposure
     + the piece length (three_course_extent_ft's arithmetic). `courses=None` is this package's own tie-in count,
@@ -190,6 +214,18 @@ APPURTENANCE_CLEARANCE_IN = 21.0
 # stays exactly what it was and goes on serving every curb-flashed item.
 APPURTENANCE_BASE_CLEARANCE_IN = 6.0
 
+# FRAME ARC-03a — WHAT A DECLARED WOOD-SHAKE PROFILE MUST CARRY. A schema_version 1 project names every one of
+# these explicitly (typed by the user, or a visibly labelled preset the user selected); none is filled from
+# DEFAULT_SHAKE_MEASUREMENTS. The ONE preset is those same package values, offered by name and never injected.
+PROFILE_SETTINGS = {"width_in": {"nullable": False}, "exposure_in": {"nullable": False},
+                    "length_in": {"nullable": False}, "thickness": {"nullable": False}}
+PROFILE_PRESETS = {
+    "standard_24in_heavy": {
+        "label": "Standard preset (not field-measured): 7 in width, 10 in exposure, 24 in length, 3/4 heavy",
+        "settings": {k: DEFAULT_SHAKE_MEASUREMENTS[k] for k in PROFILE_SETTINGS},
+    },
+}
+
 register(SYSTEM_ID,
          resolve_profile=resolve_shake_measurements,
          disturbance={"VALLEY": valley_disturbance},
@@ -197,4 +233,9 @@ register(SYSTEM_ID,
          claims_unlabelled_profiles=True,
          course_top_ft=_course_top_ft,
          appurtenance_clearance_in=APPURTENANCE_CLEARANCE_IN,
-         appurtenance_base_clearance_in=APPURTENANCE_BASE_CLEARANCE_IN)
+         appurtenance_base_clearance_in=APPURTENANCE_BASE_CLEARANCE_IN,
+         profile_settings=PROFILE_SETTINGS,
+         profile_presets=PROFILE_PRESETS,
+         # FRAME ARC-05a: the two package-owned operations shared modules used to import directly (E2, E3)
+         operations={"field_piece_count": _field_piece_count,
+                     "roof_eave_ice_and_water": _roof_eave_ice_and_water})

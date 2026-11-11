@@ -37,9 +37,54 @@ from module1_service import (
 from workbench_roof_layout import _xy, _facet_local_to_shared, _local_to_shared_transform
 from module2_assembly import _replacement_facet_area, encoding_b_zone, _encoding_b_candidate   # v62/v69: ONE authority for replacement area and for
                                                        # diagram total can never disagree with the scope.
-from module2_scope_expansion import _shake_count
+# FRAME ARC-05a: the per-event piece count is a PACKAGE OPERATION (field_piece_count), asked of the one installed package
+# that declares it — no longer a direct import of the wood-shake package's _shake_count (package isolation exception E3
+# retired). module1_service (imported above) has already registered the installed packages.
+from roof_systems import operation_owner as _operation_owner, require_operation as _require_operation
+from roof_systems import declares_operation as _declares_operation   # FRAME ARC-06a (E)
+from roof_systems import system_for_facet as _system_for_facet, system_for_facets as _system_for_facets
+from roof_systems import system_for_profile as _system_for_profile
+from roof_systems import geometry_profile_for_facet as _geometry_profile_for_facet   # FRAME ARC-06a (B1)
+
+
+def _piece_count(affected_sf, measured_profile) -> int:
+    """How many pieces of the field covering `affected_sf` takes, from the claim's measured profile: the
+    `field_piece_count` operation of the ONE installed package that declares it, repair_factor 1.0 (the diagram's
+    fixed value). Before ARC-05a this was _shake_count(sf, 1.0, width, exposure) imported from the wood-shake package,
+    with width / exposure read from the profile beside a 7.0 / 10.0 fallback written HERE; the package now reads its
+    own settings and its own defaults from the same profile, so every count is unchanged. A covering that declares no
+    piece count (a membrane) is never asked; with no declarer, or two, this raises by name (ARC-06 decides mixed
+    ownership) — it never fabricates a count."""
+    owner = _operation_owner("field_piece_count", "the diagram's per-event piece count")
+    return _require_operation(owner, "field_piece_count")(float(affected_sf), 1.0, measured_profile)
+
+
+def _facet_ids_of(facet_id) -> list:
+    """The member facets an event names: 'F7', or a notch's members joined by '/' (the diagram) or '+' (the engine)."""
+    return [x for x in str(facet_id).replace("+", "/").split("/") if x]
+
+
+def _event_piece_system(facet_id, confirmed_selection):
+    """FRAME ARC-06a (E): the roof system whose `field_piece_count` answers for THIS event — the event's own facet's
+    system (members of a merge must agree: system_for_facets raises otherwise, and such a merge never reaches here)."""
+    ids = _facet_ids_of(facet_id)
+    return _system_for_facets(ids, confirmed_selection) if len(ids) > 1 else _system_for_facet(ids[0], confirmed_selection)
+
+
+def _event_piece_count(affected_sf, measured_profile, facet_id, confirmed_selection):
+    """FRAME ARC-06a (E): the per-event piece count, PER FACET. Until ARC-06a every event was counted by the one
+    package that declares `field_piece_count` (wood shake) — including events on MODBIT facets, a borrowed wood-shake
+    EA. Now: the event's own facet's package answers if it declares the operation; otherwise the count is NOT
+    APPLICABLE (None) and is never fabricated. `confirmed_selection` None = the pre-ARC-06a call, unchanged."""
+    if confirmed_selection is None:
+        return _piece_count(affected_sf, measured_profile)
+    sid = _event_piece_system(facet_id, confirmed_selection)
+    if not _declares_operation(sid, "field_piece_count"):
+        return None
+    return _require_operation(sid, "field_piece_count")(float(affected_sf), 1.0, measured_profile)
 from workbench_seam import XML_TEXT_KEYS, _selection_for_candidate_display
 from roof_systems import roof_system_keys, validate_roof_system_selection   # FRAME v104a: the per-facet system contract
+from roof_systems import PROJECT_CONFIG_KEY   # FRAME ARC-03a
 
 
 _REQUIRED_CONFIRMED_KEYS = {
@@ -81,9 +126,11 @@ def build_diagram_data(geom_or_xml: EagleViewGeometry | str, ui_selection: Mappi
     # components skipped the band code entirely: no shading, and the Continue gate's in-zone
     # penetration check ran against an empty diagram. Emptiness is a property of the EVENTS,
     # not of Module-1's components.
-    events = _event_regions(service_result.candidate_package.geom, service_result, confirmed_selection)
+    _unsupported: list = []
+    events = _event_regions(service_result.candidate_package.geom, service_result, confirmed_selection,
+                            unsupported_out=_unsupported)
     if not events:
-        return {
+        _empty = {
             "events": [],
             "summary": {
                 "total_SF": 0.0,
@@ -91,6 +138,9 @@ def build_diagram_data(geom_or_xml: EagleViewGeometry | str, ui_selection: Mappi
                 "pct_of_roof": 0.0,
             },
         }
+        if _unsupported:
+            _empty["summary"]["unsupported_events"] = _unsupported   # FRAME ARC-06a (B1)
+        return _empty
     # THE DIAGRAM READS FROM THE MATH. total_SF used to come from `service_result` — a Module-1 value
     # computed BEFORE the transition bands exist — while total_EA was summed from the events (which
     # DO include them). So EA moved and SF did not, and the header contradicted the picture beneath
@@ -119,7 +169,7 @@ def build_diagram_data(geom_or_xml: EagleViewGeometry | str, ui_selection: Mappi
     geom = service_result.candidate_package.geom
     shakeable_sf = round(float(sum(_round_sf(_replacement_facet_area(geom, f)) for f in geom.roof_faces)), 1)
     pct = round((total_sf / shakeable_sf) * 100.0, 2) if shakeable_sf else 0.0
-    return {
+    out = {
         "events": events,
         "summary": {
             "total_SF": total_sf,
@@ -127,6 +177,13 @@ def build_diagram_data(geom_or_xml: EagleViewGeometry | str, ui_selection: Mappi
             "pct_of_roof": pct,
         },
     }
+    # FRAME ARC-06a: present ONLY when there is something to say, so a single-covering diagram is byte-identical.
+    if _unsupported:
+        out["summary"]["unsupported_events"] = _unsupported
+    _na = [e["event_label"] for e in events if e.get("piece_count_applicable") is False]
+    if _na:
+        out["summary"]["piece_count_not_applicable_events"] = _na
+    return out
 
 
 def _resolve_geometry_and_xml(geom_or_xml: EagleViewGeometry | str, selection: Mapping[str, Any]) -> tuple[EagleViewGeometry, str]:
@@ -146,6 +203,14 @@ def _resolve_geometry_and_xml(geom_or_xml: EagleViewGeometry | str, selection: M
 def _confirmed_selection_from_ui(geom: EagleViewGeometry, selection: Mapping[str, Any]) -> Mapping[str, Any]:
     # FRAME v104a: the claim's roof system is validated against this roof's facets on BOTH shapes, and (below) rides
     # onto the converted selection exactly as given — carried to module1_service, read by nothing yet (v104b).
+    if PROJECT_CONFIG_KEY in selection:
+        # FRAME ARC-03a: a schema_version 1 project — THE SAME carry the scope seam uses (project_config.carry_to_engine),
+        # so the diagram and the scope cannot read the project differently. No legacy material key is read.
+        from project_config import carry_to_engine
+        validate_roof_system_selection(roof_system_keys(selection), geom.roof_faces)   # one authority; exclusions
+        _carried = carry_to_engine(selection, xml_text=None, geometry=geom)
+        _plain = {k: v for k, v in selection.items() if k not in (PROJECT_CONFIG_KEY,)}
+        return {**dict(_confirmed_selection_from_ui(geom, _plain)), **_carried}
     _systems = roof_system_keys(selection)
     if _systems:
         validate_roof_system_selection(_systems, geom.roof_faces)
@@ -188,15 +253,34 @@ def _confirmed_selection_from_ui(geom: EagleViewGeometry, selection: Mapping[str
     return confirmed
 
 
-def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selection: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selection: Mapping[str, Any],
+                   unsupported_out: list | None = None) -> list[dict[str, Any]]:
     valley_candidates = {c.source_ids[0]: c for c in service_result.candidate_package.valleys}
     penetration_candidates = {c.source_ids[0]: c for c in service_result.candidate_package.penetrations}
     notch_candidates = {tuple(c.source_ids): c for c in service_result.candidate_package.notches}
     components = iter(service_result.components)
+    # FRAME ARC-06a (B1): events the facet's own package refused — collected into the caller's list when it passes one
+    unsupported: list[dict[str, Any]] = unsupported_out if unsupported_out is not None else []
     repair_facet_ids = _repair_facet_ids(confirmed_selection)
     replaced_facet_ids = {str(_confirmed_mapping(_it)["face_id"]) for _it in confirmed_selection.get("replaced_facets", [])}
     out: list[dict[str, Any]] = []
     shake_measurements = confirmed_selection.get("shake_measurements") or confirmed_selection.get("shake_profile") or {"width_in": 7.0, "exposure_in": 10.0}
+    # FRAME ARC-06a (B1): the claim profile RESOLVED by its own package (so a facet of that package is handed exactly
+    # this profile back), and each facet's geometry asks ITS OWN profile (roof_systems.geometry_profile_for_facet).
+    _claim = _system_for_profile(shake_measurements).resolve_profile(shake_measurements)
+    _sel = confirmed_selection
+
+    def _gp(fid):
+        return _geometry_profile_for_facet(fid, _sel, _claim)
+
+    def _refused(component, kind, face_id):
+        # FRAME ARC-06a (B1): module1_service left a placeholder for an event the facet's package refused: list it,
+        # draw nothing, count nothing.
+        if getattr(component, "unsupported_reason", None) is None:
+            return False
+        unsupported.append({"event_label": str(component.label), "facet_id": str(face_id), "kind": kind,
+                            "reason": str(component.unsupported_reason)})
+        return True
 
     for item in confirmed_selection.get("single_valley_repairs", []):
         row = _confirmed_mapping(item)
@@ -205,17 +289,19 @@ def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selec
         valley_id = str(row["valley_id"])
         cand = _require_candidate(valley_candidates, valley_id, "valley")
         _require_bordering_face(cand, face_id)
+        if _refused(component, "single_valley", face_id):
+            continue
         # v69 NINTH DIVERGENCE FIX: an Encoding-B face (self-bounding HIDDEN slit) is reframed in the
         # SCOPE (module2). The diagram must draw the SAME zone, from the SAME authority — never a second
         # reframing here. encoding_b_zone returns the reframed mask+area (or None for a plain facet).
-        ebz = encoding_b_zone(geom, face_id, [valley_id], confirmed_selection, shake_measurements)
+        ebz = encoding_b_zone(geom, face_id, [valley_id], confirmed_selection, _gp(face_id))
         if ebz is not None:
             area, zone, gx, gy, _facet = ebz
             _f, _v, _n, _p, to_shared = _notch_zone_inputs(geom, _encoding_b_candidate(geom, face_id))
-            out.append(_event_dict(row.get("label", f"{face_id}:{valley_id}"), face_id, area, zone, gx, gy, to_shared, shake_measurements))
+            out.append(_event_dict(row.get("label", f"{face_id}:{valley_id}"), face_id, area, zone, gx, gy, to_shared, _gp(face_id), confirmed_selection=_sel))
             continue
         to_shared = _facet_local_to_shared(geom, face_id)  # Module 1's mask, drawn directly (no re-derivation)
-        out.append(_event_dict(row.get("label", f"{face_id}:{valley_id}"), face_id, component.affected_SF_raw, component.zone, component.gx, component.gy, to_shared, shake_measurements))
+        out.append(_event_dict(row.get("label", f"{face_id}:{valley_id}"), face_id, component.affected_SF_raw, component.zone, component.gx, component.gy, to_shared, _gp(face_id), confirmed_selection=_sel))
 
     for item in confirmed_selection.get("multi_valley_facets", []):
         row = _confirmed_mapping(item)
@@ -225,14 +311,16 @@ def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selec
         for valley_id in valley_ids:
             cand = _require_candidate(valley_candidates, valley_id, "valley")
             _require_bordering_face(cand, face_id)
-        ebz = encoding_b_zone(geom, face_id, list(valley_ids), confirmed_selection, shake_measurements)
+        if _refused(component, "multi_valley", face_id):
+            continue
+        ebz = encoding_b_zone(geom, face_id, list(valley_ids), confirmed_selection, _gp(face_id))
         if ebz is not None:
             area, zone, gx, gy, _facet = ebz
             _f, _v, _n, _p, to_shared = _notch_zone_inputs(geom, _encoding_b_candidate(geom, face_id))
-            out.append(_event_dict(row.get("label", f"{face_id}:multi-valley"), face_id, area, zone, gx, gy, to_shared, shake_measurements))
+            out.append(_event_dict(row.get("label", f"{face_id}:multi-valley"), face_id, area, zone, gx, gy, to_shared, _gp(face_id), confirmed_selection=_sel))
             continue
         to_shared = _facet_local_to_shared(geom, face_id)  # Module 1's mask, drawn directly
-        out.append(_event_dict(row.get("label", f"{face_id}:multi-valley"), face_id, component.affected_SF_raw, component.zone, component.gx, component.gy, to_shared, shake_measurements))
+        out.append(_event_dict(row.get("label", f"{face_id}:multi-valley"), face_id, component.affected_SF_raw, component.zone, component.gx, component.gy, to_shared, _gp(face_id), confirmed_selection=_sel))
 
     # v62 DEFECT 1: a REPLACED facet must emit a diagram event, or page 2 reports ~0 for a full roof
     # while the scope reports the whole roof. It is NOT a run_module1_service component (that builder
@@ -261,6 +349,8 @@ def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selec
         host_face_id = str(row.get("host_face_id") or cand.params["host_facet_id"])
         if host_face_id != cand.params["host_facet_id"]:
             raise ValueError(f"penetration {penetration_id} is not hosted by {host_face_id}")
+        if _refused(component, "penetration_appurtenance", host_face_id):
+            continue
         zone_face_id = str(component.face_id or host_face_id)
         if "+" in zone_face_id:
             member_face_ids = tuple(zone_face_id.split("+"))
@@ -280,9 +370,10 @@ def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selec
             component.gx,
             component.gy,
             to_shared,
-            shake_measurements,
+            _gp(host_face_id),
             affected_SF=0.0 if _union else None,
             shake_count=0 if _union else None,
+            confirmed_selection=_sel,
         ))
         if _union:
             out[-1]["kind"] = "subsumed"     # v63: inside a full replacement — not a separate §4 box
@@ -293,6 +384,8 @@ def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selec
             continue
         component = next(components)
         host_face_id = str(row["host_facet_id"])
+        if _refused(component, "user_appurtenance", host_face_id):
+            continue
         zone_face_id = str(component.face_id or host_face_id)
         if "+" in zone_face_id:
             member_face_ids = tuple(zone_face_id.split("+"))
@@ -310,9 +403,10 @@ def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selec
             component.gx,
             component.gy,
             to_shared,
-            shake_measurements,
+            _gp(host_face_id),
             affected_SF=0.0 if _union else None,
             shake_count=0 if _union else None,
+            confirmed_selection=_sel,
         ))
         if _union:
             out[-1]["kind"] = "subsumed"     # v63: inside a full replacement — not a separate §4 box
@@ -322,14 +416,18 @@ def _event_regions(geom: EagleViewGeometry, service_result: Any, confirmed_selec
         component = next(components)
         member_face_ids = tuple(str(v) for v in row["member_face_ids"])
         cand = _require_notch_candidate(notch_candidates, member_face_ids)
+        if _refused(component, "notch", "/".join(member_face_ids)):
+            continue
         _f, _v, _n, _p, to_shared = _notch_zone_inputs(geom, cand)  # transform only; mask is Module 1's
-        out.append(_event_dict(row.get("label", ":".join(member_face_ids) + ":notch"), "/".join(member_face_ids), component.affected_SF_raw, component.zone, component.gx, component.gy, to_shared, shake_measurements))
+        out.append(_event_dict(row.get("label", ":".join(member_face_ids) + ":notch"), "/".join(member_face_ids), component.affected_SF_raw, component.zone, component.gx, component.gy, to_shared,
+                               _geometry_profile_for_facet(member_face_ids[0], _sel, _claim), confirmed_selection=_sel))
 
-    out.extend(_transition_regions(geom, confirmed_selection, shake_measurements))
+    out.extend(_transition_regions(geom, confirmed_selection, shake_measurements, _gp, unsupported_out=unsupported))
     return out
 
 
-def _transition_regions(geom: EagleViewGeometry, confirmed_selection: Mapping[str, Any], shake_measurements) -> list[dict[str, Any]]:
+def _transition_regions(geom: EagleViewGeometry, confirmed_selection: Mapping[str, Any], shake_measurements, profile_for_face=None,
+                        unsupported_out: list | None = None) -> list[dict[str, Any]]:
     """Shade the tear-off band of every ACTIVE transition (Path A or Path B), on EVERY facet it
     carves — including facets that also carry a valley repair.
 
@@ -384,6 +482,34 @@ def _transition_regions(geom: EagleViewGeometry, confirmed_selection: Mapping[st
     if not bands_by_face:
         return []
 
+    # FRAME ARC-06a r1 (independent QA r0 §5, owner question Q-E3): a transition whose two facets carry DIFFERENT roof
+    # systems is a SYSTEM BOUNDARY. The scope stops on it by name (module2_assembly, v105.3) and bills neither side; the
+    # band above is a WOOD-SHAKE course band, so drawing it — on the membrane side or the shake side — would picture a
+    # repair nobody computed. It is drawn on NO facet and listed once as unsupported (kind SYSTEM_BOUNDARY); every other
+    # transition is untouched. Only on the registry-aware path (profile_for_face given) — the legacy call is unchanged.
+    if profile_for_face is not None:
+        from transition_events import active_transitions
+        from roof_systems import system_for_facet as _sys_for_facet
+        _boundary: dict[str, tuple[str, str, str, str]] = {}
+        for _tr in active_transitions(geom, confirmed_selection):
+            _sa = _sys_for_facet(str(_tr.face_a_id), confirmed_selection)
+            _sb = _sys_for_facet(str(_tr.face_b_id), confirmed_selection)
+            if _sa != _sb:
+                _boundary[str(_tr.edge_id)] = (str(_tr.face_a_id), _sa, str(_tr.face_b_id), _sb)
+        if _boundary:
+            if unsupported_out is not None:
+                for _eid, (_fa, _sa, _fb, _sb) in sorted(_boundary.items()):
+                    unsupported_out.append({
+                        "event_label": f"Transition {_eid}", "facet_id": f"{_fa}+{_fb}", "kind": "SYSTEM_BOUNDARY",
+                        "reason": (f"Transition {_eid} spans facets carrying DIFFERENT roof systems ({_fa}: {_sa}, "
+                                   f"{_fb}: {_sb}) — a SYSTEM BOUNDARY. Not computed and not drawn: what each side "
+                                   f"bills there has not been ruled on (owner question Q-E3).")})
+            bands_by_face = {f: [b for b in bs if str(b["edge_id"]) not in _boundary]
+                             for f, bs in bands_by_face.items()}
+            bands_by_face = {f: bs for f, bs in bands_by_face.items() if bs}
+            if not bands_by_face:
+                return []
+
     # The valley events the SCOPE unions the band into, per facet. Notch members are deliberately
     # absent: module2_assembly does not thread bands into a notch component either, so a banded notch
     # member is a NON-VALLEY facet on both sides of the seam and stays byte-for-byte as it was.
@@ -400,22 +526,25 @@ def _transition_regions(geom: EagleViewGeometry, confirmed_selection: Mapping[st
             valley_events_by_face.setdefault(face_id, []).append(
                 geom.valley_event_for_face(face_id, str(valley_id)))
 
-    width_in = float((shake_measurements or {}).get("width_in", 7.0))
-    exposure_in = float((shake_measurements or {}).get("exposure_in", 10.0))
-
     out: list[dict[str, Any]] = []
     for face_id, bands in sorted(bands_by_face.items()):
         engine_face = geom.engine_facet(face_id)
         pens = _penetrations_with_user_footprints(geom, confirmed_selection, face_id)
         valley_events = valley_events_by_face.get(face_id, [])
         apps = [] if valley_events else _confirmed_appurtenance_geometries_for_face(geom, confirmed_selection, face_id)
-        _p0, area_without, zone_without, gx, gy = affected_area(
-            engine_face.facet, valley_events, appurtenances=apps, penetrations=pens,
-            return_zone=True, shake_measurements=shake_measurements)
-        _p1, area_with, zone_with, _gx, _gy = affected_area(
-            engine_face.facet, valley_events, appurtenances=apps, penetrations=pens,
-            return_zone=True, shake_measurements=shake_measurements,
-            transition_bands=engine_bands(bands))
+        # FRAME ARC-06a (B1): the facet's own profile; a facet whose package refuses its valley geometry draws no band
+        # region here (the refused event is listed once, as unsupported, by _event_regions).
+        _fp = shake_measurements if profile_for_face is None else profile_for_face(face_id)
+        try:
+            _p0, area_without, zone_without, gx, gy = affected_area(
+                engine_face.facet, valley_events, appurtenances=apps, penetrations=pens,
+                return_zone=True, shake_measurements=_fp)
+            _p1, area_with, zone_with, _gx, _gy = affected_area(
+                engine_face.facet, valley_events, appurtenances=apps, penetrations=pens,
+                return_zone=True, shake_measurements=_fp,
+                transition_bands=engine_bands(bands))
+        except NotImplementedError:
+            continue
         net_zone = _np.asarray(zone_with, bool) & ~_np.asarray(zone_without, bool)
         cell = float((gx[1] - gx[0]) * (gy[1] - gy[0]))
         net_sf = float(net_zone.sum() * cell)
@@ -426,16 +555,18 @@ def _transition_regions(geom: EagleViewGeometry, confirmed_selection: Mapping[st
             # regions sum to exactly the one component the scope billed (Devore: 161.7 - 91.2 = 70.5,
             # not round(70.44) = 70.4, which would leak 0.1 SF; 349 - 204 = 145 EA, not ceil(70.44)).
             sf_receipt: float | None = round(_round_sf(area_with) - _round_sf(area_without), 1)
-            count: int | None = int(_shake_count(float(area_with), 1.0, width_in, exposure_in)
-                                    - _shake_count(float(area_without), 1.0, width_in, exposure_in))
+            _cw = _event_piece_count(area_with, _fp, face_id, confirmed_selection if profile_for_face else None)
+            _co = _event_piece_count(area_without, _fp, face_id, confirmed_selection if profile_for_face else None)
+            count: int | None = (None if _cw is None or _co is None else int(_cw - _co))
         else:
             # The band IS its own scope component. Its own area, its own rounding. Unchanged from v55.
             sf_receipt, count = None, None
         edge_ids = ", ".join(sorted({str(b["edge_id"]) for b in bands}))
         to_shared = _facet_local_to_shared(geom, face_id)
         out.append(_event_dict(f"Transition {edge_ids}", face_id, net_sf, net_zone, gx, gy,
-                               to_shared, shake_measurements,
-                               affected_SF=sf_receipt, shake_count=count))
+                               to_shared, _fp,
+                               affected_SF=sf_receipt, shake_count=count,
+                               confirmed_selection=(confirmed_selection if profile_for_face else None)))
     return out
 
 
@@ -496,6 +627,7 @@ def _event_dict(
     shake_measurements: Mapping[str, Any] | None = None,
     affected_SF: float | None = None,
     shake_count: int | None = None,
+    confirmed_selection: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     # `affected_SF` / `shake_count` are explicit REMAINDER values, supplied ONLY by an incremental
     # transition-band region drawn on a facet whose band the scope counts INSIDE another component
@@ -505,13 +637,29 @@ def _event_dict(
     # than the single component they are drawing. The POLYGON is always the region's true traced
     # zone; only the receipt it is labelled with is the remainder. Every other event is a component in
     # its own right and derives both values from its own area, exactly as before.
-    return {
+    # FRAME ARC-06a (E): the count is the EVENT'S OWN FACET's package's piece count, or NOT APPLICABLE when that package
+    # declares none (a membrane) — then shake_count is 0 (no pieces are billed by piece) and the event says so; a
+    # wood-shake EA is never borrowed for it. Events of a declaring package carry exactly the keys they always did.
+    applicable = True
+    if shake_count is None:
+        _c = _event_piece_count(affected_sf_raw, shake_measurements, facet_id, confirmed_selection)
+        applicable = _c is not None
+        count = int(_c) if applicable else 0
+    else:
+        count = int(shake_count)
+        if confirmed_selection is not None:
+            applicable = _declares_operation(_event_piece_system(facet_id, confirmed_selection), "field_piece_count")
+    out = {
         "event_label": str(label),
         "facet_id": str(facet_id),
         "affected_polygon": _zone_to_polygon(zone, gx, gy, to_shared, affected_sf_raw),
         "affected_SF": _round_sf(affected_sf_raw) if affected_SF is None else _round_sf(affected_SF),
-        "shake_count": int(_shake_count(float(affected_sf_raw), 1.0, (shake_measurements or {}).get("width_in", 7.0), (shake_measurements or {}).get("exposure_in", 10.0))) if shake_count is None else int(shake_count),
+        "shake_count": count,
     }
+    if not applicable:
+        out["piece_count_applicable"] = False
+        out["piece_count_system"] = str(_event_piece_system(facet_id, confirmed_selection))
+    return out
 
 
 def _zone_to_polygon(
@@ -817,91 +965,11 @@ def _shoelace_area(poly: Sequence[Sequence[float]]) -> float:
     return abs(area) / 2.0
 
 
-def _run_receipts() -> int:
-    """SELF-RECEIPT — asserts THE INVARIANT, not a magic number.
-
-    RE-GROUNDED v57 (2026-07-22). This used to read:
-
-        total_ok = result["summary"]["total_SF"] == 1638.0 and result["summary"]["total_EA"] == 3691
-
-    Two hard-coded totals from before Path A was activated, so this receipt printed FAIL on a healthy
-    build for eleven versions. Re-baselining them to 1639.4 / 3382 would have bought about one
-    re-grounding of silence and then gone stale again in exactly the same way — the failure mode is
-    the MAGIC NUMBER, not the value in it.
-
-    So it asserts what the diagram actually OWES instead:
-
-        diagram total_SF == scope affected_SF_display_total   AND   diagram total_EA == scope shake EA
-
-    computed from the SAME selection in the SAME run. That is the rule the whole v56 fix exists to
-    protect — THE DIAGRAM READS FROM THE MATH; it may never report a total that disagrees with the
-    scope — it is self-maintaining across any future re-grounding, and it is a strictly STRONGER check
-    than the pair of constants it replaces: a hard-coded 1639.4 only fails if the diagram breaks, but
-    this fails if the diagram and the scope ever diverge FOR ANY REASON, on any of the selections
-    below. Fed the v55 diagram code it fails on the overlap selection, which is the bug v56 fixed.
-
-    The selections are chosen so at least one of them can actually fail: the DEFAULT Yager selection
-    is structurally blind to the transition-band overlap bug (facet V is 100% swept, so its band adds
-    0 SF), which is precisely how that bug survived. The empty-selection check is kept as it was.
-    """
-    import json
-    from module1_yager_proof import YAGER_CONFIRMED_SELECTION
-    from workbench_seam import build_scope_from_ui_selection, _ui_selection_from_confirmed_selection
-
-    xml = open("XML.txt", encoding="utf-8").read()
-    ui = _ui_selection_from_confirmed_selection(YAGER_CONFIRMED_SELECTION, xml_text=xml)
-    l79 = [{"edge_id": "L79", "exposed": True, "damaged": True}]
-
-    selections = [
-        ("Yager default (Path A, L33 auto)", ui),
-        ("Yager default + L79 confirmed", {**ui, "transition_repairs": l79}),
-        # THE ONE THAT CAN FAIL: F17 carries BOTH a valley repair and a band that adds real area.
-        ("OVERLAP — L79 + the Q side (F17) of L83/L84",
-         {"xml_text": xml,
-          "valley_intersections": [{"face_id": "F17", "valley_id": "L83", "claim_valley_lf": True},
-                                   {"face_id": "F17", "valley_id": "L84", "claim_valley_lf": True}],
-          "appurtenances": [], "notches": [], "transition_repairs": l79}),
-    ]
-
-    print("ROOF-FRAME TRACER RECEIPTS")
-    result = build_diagram_data(xml, ui)
-    print("json_serializable:", bool(json.dumps(result)))
-    print("events:", len(result["events"]))
-    print("summary:", result["summary"])
-    print("label | affected_SF | shake_count | shared_vertices | shared_polygon_area")
-    for event in result["events"]:
-        print(
-            f"{event['event_label']} | {float(event['affected_SF']):.1f} | "
-            f"{event['shake_count']} | {len(event['affected_polygon'])} | "
-            f"{_shoelace_area(event['affected_polygon']):.1f}"
-        )
-
-    print("\nTHE INVARIANT — diagram == scope, both totals, same selection, same run:")
-    total_ok = True
-    for label, selection in selections:
-        diagram = build_diagram_data(xml, selection)
-        scope = build_scope_from_ui_selection(xml, selection)
-        d_sf = round(float(diagram["summary"]["total_SF"]), 1)
-        d_ea = int(diagram["summary"]["total_EA"])
-        s_sf = round(float(scope.affected_SF_display_total), 1)
-        s_ea = int(next(float(l.qty) for l in scope.aggregated_scope
-                        if l.category_id == "SHAKE_FIELD_RR"))
-        # Summed from the events actually DRAWN, so the header can never disagree with the picture.
-        drawn_sf = round(sum(float(e["affected_SF"]) for e in diagram["events"]), 1)
-        drawn_ea = sum(int(e["shake_count"]) for e in diagram["events"])
-        ok = (d_sf, d_ea) == (s_sf, s_ea) == (drawn_sf, drawn_ea)
-        total_ok &= ok
-        print(f"  [{'PASS' if ok else 'FAIL'}] {label}: diagram {d_ea} EA / {d_sf} SF == "
-              f"drawn {drawn_ea} / {drawn_sf} == scope {s_ea} / {s_sf}")
-
-    empty = build_diagram_data(xml, {"selected_valley_ids": [], "single_valley_repairs": [], "multi_valley_facets": [], "penetration_appurtenance_repairs": [], "notch_repairs": []})
-    empty_ok = empty["events"] == [] and empty["summary"]["total_SF"] == 0.0 and empty["summary"]["total_EA"] == 0
-    print("invariant_check:", "PASS" if total_ok else "FAIL")
-    print("empty_selection:", "PASS" if empty_ok else "FAIL", empty)
-    print("RESULT:", "PASS" if total_ok and empty_ok else "FAIL")
-    return 0 if total_ok and empty_ok else 1
-
-
 if __name__ == "__main__":
+    # FRAME ARC-04a: the self-receipt `_run_receipts` MOVED, byte-for-byte, to
+    # verification/workbench_diagram_receipts_regression.py (it held a shipped material-term site) and now runs in the
+    # suite. Running this module no longer runs it; it says where it went and exits non-zero rather than passing silently.
     import sys as _sys
-    _sys.exit(_run_receipts())
+    print("deploy/workbench_diagram_data.py: the diagram self-receipt moved to "
+          "verification/workbench_diagram_receipts_regression.py (FRAME ARC-04a).")
+    _sys.exit(2)

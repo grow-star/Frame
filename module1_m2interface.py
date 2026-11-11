@@ -63,6 +63,7 @@ def build_m1_interface_for_face(
     shake_measurements: Optional[Mapping[str, object]] = None,
     is_replacement: bool = False,
     extra_edges: Iterable[Edge] = (),
+    geometry_profile: Optional[Mapping[str, object]] = None,
 ) -> M1Interface:
     """Translate one confirmed facet stream into Module 2's M1Interface.
 
@@ -74,14 +75,19 @@ def build_m1_interface_for_face(
     edge is a valley but never WHICH valley, and a system boundary is identified by line id. The caller
     (module2_assembly, which holds the boundary set and the registry) builds those and passes them in
     EXPLICITLY. Default () keeps every existing call byte-identical, and this is a keyword with no default
-    behaviour of its own: nothing here decides what a boundary is."""
+    behaviour of its own: nothing here decides what a boundary is.
+
+    FRAME ARC-06a (B1): `geometry_profile` is the profile this facet's GEOMETRY runs with (its own package's — the
+    caller resolves it through roof_systems.geometry_profile_for_facet). None = the claim-level profile, exactly as
+    before. The interface's measured_profile (the SCOPE side) is always `shake_measurements`, unchanged."""
+    _geo = shake_measurements if geometry_profile is None else geometry_profile
     engine_face = geom.engine_facet(face_id)
     face = geom.faces[face_id]
     confirmed_valleys = tuple(v for v in confirmed_valley_line_ids if v in face.line_ids)
     valley_events = [geom.valley_event_for_face(face_id, valley_id) for valley_id in confirmed_valleys]
 
     if affected_SF is None:
-        per_areas, _ = affected_area(engine_face.facet, valley_events, penetrations=[_p for _p in engine_face.penetrations if (lambda q: abs(sum(q[i][0]*q[(i+1)%len(q)][1]-q[(i+1)%len(q)][0]*q[i][1] for i in range(len(q))))/2.0)(_p) >= 0.5], shake_measurements=shake_measurements)
+        per_areas, _ = affected_area(engine_face.facet, valley_events, penetrations=[_p for _p in engine_face.penetrations if (lambda q: abs(sum(q[i][0]*q[(i+1)%len(q)][1]-q[(i+1)%len(q)][0]*q[i][1] for i in range(len(q))))/2.0)(_p) >= 0.5], shake_measurements=_geo)
         affected = float(sum(per_areas))
     else:
         affected = float(affected_SF)
@@ -91,9 +97,12 @@ def build_m1_interface_for_face(
     else:
         valley_lf = float(valley_LF_in_scope)
 
-    surfaced_edges = _surface_edges(engine_face.facet, valley_events, engine_face.edges, shake_measurements=shake_measurements)
+    surfaced_edges = _surface_edges(engine_face.facet, valley_events, engine_face.edges, shake_measurements=_geo)
     surfaced_edges = surfaced_edges + [e for e in extra_edges]
-    surfaced_transitions = _surface_transitions(geom, face_id, confirmed_transition_line_ids, valley_events)
+    # the transition contact reading has never been given the claim profile (it runs at the claimant's defaults — an
+    # adjacent finding ARC-06a discloses and does NOT change); only a facet on ANOTHER profile hands its own over.
+    _tr_geo = None if (geometry_profile is None or geometry_profile == shake_measurements) else geometry_profile
+    surfaced_transitions = _surface_transitions(geom, face_id, confirmed_transition_line_ids, valley_events, _tr_geo)
     surfaced_appurts = _surface_appurts(confirmed_appurtenance_candidates)
 
     return M1Interface(
@@ -104,9 +113,7 @@ def build_m1_interface_for_face(
         transitions=surfaced_transitions,
         facet_pitch_tier=facet_pitch_tier,
         high_slope_user_flag=high_slope_user_flag,
-        shake_width_in=float((shake_measurements or {}).get("width_in", 7.0)),
-        exposure_in=float((shake_measurements or {}).get("exposure_in", 10.0)),
-        length_in=float((shake_measurements or {}).get("length_in", 24.0)),   # v90: never a half-measured profile
+        measured_profile=shake_measurements,   # FRAME ARC-04a: opaque; the scoping package resolves its own dimensions
         is_replacement=is_replacement,
     )
 
@@ -128,6 +135,7 @@ def _surface_transitions(
     face_id: str,
     confirmed_transition_line_ids: Iterable[str],
     valley_events,
+    geometry_profile=None,
 ) -> List[Transition]:
     selected_transitions = set(confirmed_transition_line_ids)
     if not selected_transitions:
@@ -148,7 +156,9 @@ def _surface_transitions(
             "TRANSITION",
             transition.edge_total_LF,
         )]
-        contacts = edge_contacts(engine_face.facet, valley_events, edge, res=0.04) if valley_events else {}
+        # FRAME ARC-06a (B1): the facet's own geometry profile (None -> the claimant's, exactly as before)
+        contacts = edge_contacts(engine_face.facet, valley_events, edge, res=0.04,
+                                 shake_measurements=geometry_profile) if valley_events else {}
         contact_lf = float(contacts.get("TRANSITION", (0.0, transition.edge_total_LF))[0])
         total_lf = float(contacts.get("TRANSITION", (contact_lf, transition.edge_total_LF))[1])
         out.append(Transition(contact_lf, total_lf))

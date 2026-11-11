@@ -144,10 +144,21 @@ APPURTENANCE_CLEARANCE_IN = 6.0
 # do not, which is why the number is declared per method and per package rather than once.
 APPURTENANCE_BASE_CLEARANCE_IN = 6.0
 
+# FRAME ARC-03a — WHAT A DECLARED MODBIT PROFILE MUST CARRY: the application method, chosen by the user. None is
+# an explicit answer ("not stated" -> the unqualified line), never an automatic one; the closed list is
+# APPLICATION_METHODS above. No preset: there is no MODBIT value to offer that the user did not choose.
+PROFILE_SETTINGS = {"application": {"nullable": True, "choices": APPLICATION_METHODS}}
+
 register(SYSTEM_ID,
          resolve_profile=resolve_modbit_profile,
          disturbance={"VALLEY": valley_disturbance},
          expand_scope=_expand_scope,
          tie_in_courses=3,
          appurtenance_clearance_in=APPURTENANCE_CLEARANCE_IN,
-         appurtenance_base_clearance_in=APPURTENANCE_BASE_CLEARANCE_IN)
+         appurtenance_base_clearance_in=APPURTENANCE_BASE_CLEARANCE_IN,
+         profile_settings=PROFILE_SETTINGS,
+         # FRAME ARC-05a: the VALLEY entry above is a NAMED REFUSAL (valley_disturbance raises NotImplementedError),
+         # and the registration now says so, so no capability listing can count it as an implemented strategy.
+         # No package operation is declared: a membrane has no piece count, and the roof-level eave ice & water
+         # line has never been MODBIT's — asking this package for either raises by name.
+         refused_events=("VALLEY",))

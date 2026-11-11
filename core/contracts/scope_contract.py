@@ -8,17 +8,17 @@ vocabulary (METAL_* / TRANSITION_METAL_VALUES). Moved here BYTE-FOR-BYTE from mo
 split in v100: these types stay in core, the wood-shake scoping (expand_scope and its constants) moved to
 roof_systems/wood_shake/. No field, default or value changed.
 
-M1Interface's two dimensional defaults (shake_width_in / exposure_in) read EXPOSURE_IN / SHAKE_WIDTH_IN, so those
-two constants moved with it (lines below, byte-identical). LOGGED KNOWN VIOLATION — "wood-shake defaults on the core
-interface" (QA v100 Q1): 4 purity sites (the 2 definitions + the 2 defaults). They retire with the M1Interface
-enrichment that retires bridge 4, when the interface carries the line's own material profile. A second roof system
-needs no edit here: it constructs M1Interface with its own values and never reads these defaults.
+FRAME ARC-04a: THIS MODULE NAMES NO MATERIAL. Until ARC-04a, M1Interface carried three wood-shake dimension fields
+(shake_width_in / exposure_in / length_in) whose defaults read EXPOSURE_IN = 10.0 and SHAKE_WIDTH_IN = 7.0, defined
+here — the logged known violation "wood-shake defaults on the core interface" (QA v100 Q1) — and this module also
+held the three MEMBRANE_* flat-roof detail values. All of them left core:
+  * the interface now carries the resolved MEASURED PROFILE opaquely (`measured_profile`); the wood-shake package
+    reads its own setting names from it and supplies its own legacy defaults (7 in width, 10 in exposure, 24 in
+    length) when a caller hands none — roof_systems/wood_shake/module2_scope_expansion.interface_profile;
+  * the MEMBRANE_* values live, unchanged, in the package that reads them: roof_systems/modbit/modbit_scope_expansion.
 """
 from dataclasses import dataclass, field
-from typing import Optional
-
-EXPOSURE_IN      = 10.0     # default 24" shake exposure
-SHAKE_WIDTH_IN   = 7.0      # default measured average width
+from typing import Mapping, Optional
 
 # ---- v91: WHAT IS AT A TRANSITION (Joseph 2026-10-17 / 2026-10-25) -------------------------------
 # ONE vocabulary. transition_events validates every payload row against it (the data layer is the
@@ -50,42 +50,10 @@ TRANSITION_METAL_VALUES = (METAL_EXPOSED, METAL_CONCEALED, METAL_NONE, METAL_MEM
 # The VALUE is unchanged at 0.95, so no quantity moves: this is a move, not a rule change.
 CAP_THRESHOLD = 0.95
 
-# ---- FRAME v106.6: THE FLAT-ROOF DETAIL CONSTANTS, here for the reason CAP_THRESHOLD is here ------
-# Joseph, 2026-11-04, ruling the appurtenance detail: "your proposals are good for the MODBIT and really for
-# TPO and EPDM as well." These numbers are therefore NOT any system's. They are the detail's and Xactimate's,
-# identical across MODBIT, TPO and EPDM, and a package cannot import another package — so a copy in each
-# flat package as it is written is the failure this file was opened to fix one version ago.
-#
-# They do NOT contradict Finding 1 of the line-items doc ("a shared flat-roof profile struct would be wrong
-# four times out of four"). That rules on PROFILES — application method, ply count, attachment, thickness —
-# which genuinely differ per system. A 6in cut-back and a 4in curb do not.
-
-# The vertical membrane leg. The SAME 12in at a wall (v106.5), at a parapet, and up a chimney chase
-# (Joseph, 2026-11-04: "you flash it with MODBIT like you do with walls").
-MEMBRANE_LEG_FT = 1.0
-
-# A skylight curb is a MINIMUM of 4 inches, and the leg stops there — "the curb is usually 4", so the leg
-# isn't as big, before the skylight goes over the curb". Minimum, so this under-states a taller curb and
-# can only err toward the carrier, which is the same property the blank-sidewall default relies on.
-MEMBRANE_SKYLIGHT_CURB_FT = 4.0 / 12.0
-
-# THE CUT-BACK. Joseph's repair method: 12 inches added to BOTH dimensions, for a 6in cut-back on all sides.
-# His worked example is this constant's test: a 2ft x 2ft skylight gives a 3ft x 3ft footprint = 9 SF.
-# The quantity INCLUDES the appurtenance's own footprint — it is the cut-out rectangle, not a collar.
-# FRAME v106.6d: MEMBRANE_CUTBACK_FT IS GONE, and that is a correction of a lie QA shipped.
-# v106.6c's comment in modbit_geometry.py claimed "ONE number, declared once, read by the carve and by the
-# patch" and its prompt said the two "now cannot disagree". Both were false: the carve read the package's
-# declared appurtenance_clearance_in (6 in) while the patch read THIS constant (1.0 ft). They agreed in
-# value — 2 x 6 in is 1 ft — and nothing derived either from the other, so a change to one moved only its
-# own side. The builder found it, QA confirmed it by reading the shipped code, and ledger entry 129 records
-# it as QA error 77. The cut-back is now DERIVED from the declared clearance in modbit_scope_expansion, so
-# the sentence is true for the first time and there is one declaration instead of two.
-
-# The patch bands, in SF PER PATCH, billed EACH (Joseph: "It's each. So it gives you 1 each for a 4SF
-# patch"). Xactimate's, identical on `SPLYPT*` (single-ply) and `RUBPT*` (rubber), so they are the flat
-# family's and not a package's. Ordered LARGEST FIRST because that is the order the multiple-patch rule
-# fills in, and a band list that is sorted the other way would read as ascending and fill wrongly.
-MEMBRANE_PATCH_BANDS = (15.0, 9.0, 4.0)
+# ---- FRAME ARC-04a: the v106.6 flat-roof detail values (MEMBRANE_LEG_FT, MEMBRANE_SKYLIGHT_CURB_FT,
+# MEMBRANE_PATCH_BANDS) MOVED, unchanged in value and unit, to the one package that reads them:
+# roof_systems/modbit/modbit_scope_expansion.py (their sourcing comments moved with them). No core module
+# reads a membrane value.
 
 # ---- FRAME v106.3b: THE SYSTEM BOUNDARY, as an edge type -----------------------------------------
 # An edge where the two bordering roof facets carry DIFFERENT roof systems. It is not a geometric kind the
@@ -193,10 +161,20 @@ class M1Interface:
     transitions: list = field(default_factory=list)      # list[Transition]
     facet_pitch_tier: Optional[str] = None               # one of STEEP_TIERS or None
     high_slope_user_flag: bool = False                   # §7 user confirm
-    shake_width_in: float = SHAKE_WIDTH_IN
-    exposure_in: float = EXPOSURE_IN
-    length_in: float = 24.0                               # v90: first consumer is the transition tie-in extent
     is_replacement: bool = False                          # v61 §facet-replacement: bill SQ, not EA
+    # FRAME ARC-03a: the OPAQUE material-aware handoff — {"profile_id", "system_id", "profile"} for the facet this
+    # interface scopes, set by the assembly from the project's ONE resolver (core/contracts/project_config.py) when
+    # the claim is a schema_version 1 project; None for every historical/legacy selection, so every existing
+    # construction is unchanged. Core reads nothing inside it; a package may.
+    material_profile: Optional[Mapping[str, object]] = None
+    # FRAME ARC-04a: the claim's RESOLVED MEASURED PROFILE (its package's resolve_profile output, e.g. the job's
+    # measured shake width / exposure / length), handed to the scoping package OPAQUELY. It replaces the three
+    # wood-shake fields this interface carried until ARC-04a (shake_width_in = 7.0 / exposure_in = 10.0 /
+    # length_in = 24.0), which were the transitional projection of that same mapping. Core reads nothing inside
+    # it and supplies no default; None means "no profile handed", and the package that scopes this interface
+    # applies its OWN legacy default (the wood-shake package: interface_profile). A package that has no use for it
+    # (a membrane) ignores it, exactly as it ignored the three fields.
+    measured_profile: Optional[Mapping[str, object]] = None
 
 # ---- output line -------------------------------------------------------------
 @dataclass

@@ -33,15 +33,31 @@ from scope_contract import (Edge, M1Interface, ScopeLine, SYSTEM_BOUNDARY,   # F
                             Transition)   # FRAME v104b: the contract from core (the same objects)
 from facet_basis import facet_frame_axes   # FRAME v105.1: THE ONE fall-line basis
 from geometry_core import shared_edge_overlap_ft   # FRAME v106.6d: the cut line two split markers share
-from module2_scope_expansion import eave_iws_coverage, _eave_iws_citation   # the eave-IWS helpers: not the engine, not dispatched
+# FRAME ARC-05a: the eave-IWS helpers are no longer imported from the wood-shake package (package isolation exception
+# E2 retired). The roof-level eave ice & water line is a PACKAGE OPERATION, asked of the one installed package that
+# declares it (roof_systems.operation_owner / require_operation) — the same two functions, the same answer.
+from roof_systems import operation_owner, require_operation   # FRAME ARC-05a
+from roof_systems import declares_operation   # FRAME ARC-06a: per-edge ownership of a roof-level operation
 # FRAME v104b: the scope engine is ASKED FOR, never imported (bridge 6 retired). With a facet in hand, system_for_facet;
 # with none (per-transition, per-edge, per-structure calls), the sole registered system — both v104a's, no third path.
 from roof_systems import get as roof_system, system_for_facet, system_for_facets   # FRAME v105.3: never the SOLE system
 from roof_systems import excluded_facets   # FRAME v106.1: facets this claim does not scope
+from roof_systems import PROJECT_CONFIG_KEY   # FRAME ARC-03a: a schema_version 1 project's header
 from roof_systems import system_for_profile   # FRAME v105.4: the profile's OWN package resolves it
 from roof_systems import system_boundary_tie_in_ft   # FRAME v106.3b: THE ONE evaluation of the boundary ruling
 from roof_systems import appurtenance_clearance_for_facet   # FRAME v106.6c: the facet's own setback
 from roof_systems import appurtenance_clearance_for_facets   # FRAME v106.6c: a merged slope's setback
+from roof_systems import claim_geometry_profile as _claim_geometry_profile   # FRAME ARC-06a
+from roof_systems import geometry_profile_for_facet as _geometry_profile_for_facet   # FRAME ARC-06a (B1)
+from roof_systems import geometry_profile_for_facets as _geometry_profile_for_facets   # FRAME ARC-06a (B1)
+from roof_systems import RegistryWiringError as _RegistryWiringError   # ARC-06a: a cross-material union
+# FRAME ARC-05a: this module dispatches to roof-system engines, so a roof system must be registered before it can run
+# (A11). Until ARC-05a that was a by-product of the E2 import above, which registered the wood-shake package only; ARC-05a
+# kept that set as data (installed_packages.ASSEMBLY_ENTRY_PACKAGES). FRAME ARC-06a: that set is now every installed
+# package (owner direction), so page 2 — which reaches the engine through this module — lists every installed covering
+# on a fresh load and requires an explicit declaration. This module still names no package.
+import installed_packages as _installed_packages
+_installed_packages.install_assembly_roof_systems()
 from candidate_emitters import emit_valley_candidates          # v93: THE valley facet-pair source (bordering_roof_face_ids)
 from operation_dimension import R_AND_R, REPLACE                  # v93: the canonical operation constants
 from transition_events import (
@@ -130,6 +146,39 @@ class SystemBoundaryDisclosure:
 
 
 @dataclass(frozen=True)
+class UnsupportedOperation:
+    """FRAME ARC-06a (B1) — a confirmed repair event the facet's OWN roof-system package REFUSED, or a union that spans
+    two materials, recorded instead of computed.
+
+    Until ARC-06a such an event was computed with WOOD SHAKE's geometry (the claim-level profile) and billed as if it
+    were a valid membrane repair. Now the facet's package is asked; when it refuses by name (MODBIT: "what a membrane
+    valley repair disturbs has not been ruled on"), the component contributes NO area, NO lines and NO valley LF, the
+    rest of the roof is computed exactly as before, and this receipt names the facet, the event, the system and the
+    package's own words. Any entry makes the claim UNRESOLVED: comparison and report export refuse it (page 4)."""
+    face_id: str
+    designator: str
+    component_type: str
+    event: str
+    system_id: str
+    kind: str          # "PACKAGE_REFUSED" (the package raised NotImplementedError) | "SYSTEM_BOUNDARY" (cross-material union)
+    reason: str
+
+
+@dataclass(frozen=True)
+class HeldOperation:
+    """FRAME ARC-06a (E) — physical work the engine can LOCATE but may not PRICE OR SCOPE, because the owning roof
+    system's package declares no rule for it and the owner has not ruled one. Nothing is billed for it; the measured
+    basis is kept so the owner sees exactly what is held; any entry makes the claim UNRESOLVED (export refuses).
+    The first and only kind today: eave ice & water on eaves whose facet's covering declares no
+    `roof_eave_ice_and_water` operation (a MODBIT eave on a mixed roof)."""
+    operation: str
+    system_id: str
+    basis: Tuple[Tuple[str, float], ...]       # (name, value) — e.g. (("eave_LF", 22.4),)
+    edge_ids: Tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
 class RoofAssemblyResult:
     components: Tuple[ComponentAssembly, ...]
     aggregated_scope: Tuple[AggregatedScopeLine, ...]
@@ -182,6 +231,12 @@ class RoofAssemblyResult:
     # hands key_and_normalize {system_id: SF} so each field covering's dual uses ITS system's area.
     system_affected_SF: Tuple[Tuple[str, float], ...] = ()
     structure_system_affected_SF: Tuple[Tuple[str, Tuple[Tuple[str, float], ...]], ...] = ()
+    # FRAME ARC-06a (B1): repair events the facet's own package refused, or unions spanning materials — NOT computed,
+    # NOT billed. Additive, default (): a claim with none is byte-identical. Non-empty = the claim is UNRESOLVED and
+    # page 4 refuses to export it (workbench_seam / the bridge carry these to the pages).
+    unsupported_operations: Tuple[UnsupportedOperation, ...] = ()
+    # FRAME ARC-06a (E): roof-level work held for an owner ruling (see HeldOperation). Additive, default ().
+    held_operations: Tuple[HeldOperation, ...] = ()
 
 
 mkframe_pts = _quiet_import_regression_symbol("mkframe_pts")
@@ -227,17 +282,47 @@ _APPURT_MATERIAL_CATEGORIES = {
 
 
 def _shake_measurements_from_selection(confirmed_selection: Mapping[str, object]) -> Mapping[str, object]:
-    raw = confirmed_selection.get("shake_measurements") or confirmed_selection.get("shake_profile") or {}
-    return system_for_profile(raw).resolve_profile(raw)
+    # FRAME ARC-06a: the ONE claim-level profile read is roof_systems.claim_geometry_profile (identical logic). This
+    # helper and the two below are byte-identical in module1_service.py and module2_assembly.py (appurtenance A8b).
+    return _claim_geometry_profile(confirmed_selection)
 
 
-def _iface_profile(shake_measurements: Mapping[str, object]) -> Mapping[str, float]:
-    """v90: the measured profile as M1Interface fields — ALL THREE, never a subset. M1Interface must never
-    carry a half-measured profile; the transition tie-in extent reads exposure AND length from it."""
-    sm = shake_measurements or {}
-    return {"shake_width_in": float(sm.get("width_in", 7.0)),
-            "exposure_in": float(sm.get("exposure_in", 10.0)),
-            "length_in": float(sm.get("length_in", 24.0))}
+def _facet_geometry_profile(face_id, confirmed_selection) -> Mapping[str, object]:
+    """FRAME ARC-06a (B1): the profile the GEOMETRY of `face_id`'s repair events runs with — the facet's own package
+    and profile (roof_systems.geometry_profile_for_facet). The claim-level profile when the facet's system is the
+    claim profile's system (every single-system claim: unchanged); otherwise the facet's own. The SCOPE side
+    (M1Interface.measured_profile) is untouched: it keeps the claim-level profile exactly as before. One registry
+    function for both the diagram and the scope, so the diagram draws exactly what the scope computes."""
+    return _geometry_profile_for_facet(face_id, confirmed_selection or {},
+                                       _shake_measurements_from_selection(confirmed_selection or {}))
+
+
+def _members_geometry_profile(member_face_ids, confirmed_selection, context) -> Mapping[str, object]:
+    """FRAME ARC-06a (B1): the ONE profile a union across several facets (a merged slope) runs with. The members must
+    carry one roof system (system_for_facets raises RegistryWiringError on a SYSTEM BOUNDARY) and, in a project, one
+    profile; a union across materials is never computed with either side's geometry."""
+    return _geometry_profile_for_facets([str(m) for m in member_face_ids], confirmed_selection or {},
+                                        _shake_measurements_from_selection(confirmed_selection or {}), context)
+
+
+def _unsupported_record(geom, face_id, component_type, event, confirmed_selection, exc, kind):
+    """One UnsupportedOperation receipt — the facet, its event, the system it resolves to and the refusal's words."""
+    fid = str(face_id)
+    members = fid.split("+")
+    designator = "+".join(str(getattr(geom.faces.get(m), "designator", "") or m) if m in geom.faces else m
+                          for m in members)
+    try:
+        sid = system_for_facets(members, confirmed_selection) if len(members) > 1 else system_for_facet(fid, confirmed_selection)
+    except _RegistryWiringError:
+        sid = "+".join(str(system_for_facet(m, confirmed_selection)) for m in members)
+    return UnsupportedOperation(face_id=fid, designator=designator, component_type=component_type, event=str(event),
+                                system_id=str(sid), kind=kind, reason=str(exc) or type(exc).__name__)
+
+
+# FRAME ARC-04a: `_iface_profile` RETIRED. It projected the measured profile onto M1Interface's three wood-shake fields
+# with core-held 7.0 / 10.0 / 24.0 fallbacks. The interface now carries the resolved profile opaquely
+# (`measured_profile=`), and the scoping package resolves its own dimensions and defaults (the wood-shake package's
+# interface_profile — "all three, never a subset" is kept there).
 
 def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, object]) -> RoofAssemblyResult:
     """Build full roof scope from confirmed selections using surfaced M1 interfaces."""
@@ -355,14 +440,27 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
                 f"them ({_detail}). An excluded facet is not scoped at all. Fix: remove each facet from "
                 f"excluded_facets, or remove the repair that scopes it.")
 
+    _unsupported: List[UnsupportedOperation] = []   # FRAME ARC-06a (B1): refused events, never billed
     for item in confirmed_selection.get("single_valley_repairs", ()):  # type: ignore[union-attr]
         row = _as_mapping(item)
         face_id = str(row["face_id"])
         valley_id = str(row["valley_id"])
         _require_valley_borders_face(geom, valley_id, face_id)
-        valley_lf = _claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed,
-                                          _boundary_valleys)
-        affected = _single_valley_area(geom, face_id, valley_id, confirmed_selection)
+        # FRAME ARC-06a (B1): the facet's OWN package computes its valley geometry. A package that refuses the event
+        # (NotImplementedError, by name) leaves a receipt instead of a component, and gives back the valley LF it was
+        # about to claim — so nothing of the refused event is billed and every other component is untouched.
+        _claimed_before = set(valley_lf_claimed)
+        try:
+            valley_lf = _claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed,
+                                              _boundary_valleys)
+            affected = _single_valley_area(geom, face_id, valley_id, confirmed_selection)
+            _gp = _facet_geometry_profile(face_id, confirmed_selection)
+            _sv_edges = _face_edge_contributions(geom, face_id, (valley_id,), str(row.get("label", face_id)), _gp)
+        except NotImplementedError as _e:
+            valley_lf_claimed.clear(); valley_lf_claimed.update(_claimed_before)
+            _unsupported.append(_unsupported_record(geom, face_id, "single_valley", f"VALLEY {valley_id}",
+                                                    confirmed_selection, _e, "PACKAGE_REFUSED"))
+            continue
         iface = build_m1_interface_for_face(
             geom,
             face_id,
@@ -376,8 +474,9 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             # FRAME v106.3b: the repair's OWN valley, so a boundary at the other end of the facet is untouched.
             extra_edges=_system_boundary_edges(geom, face_id, (valley_id,), _boundary_valleys,
                                                _valley_pairs, confirmed_selection, shake_measurements),
+            geometry_profile=_gp,   # FRAME ARC-06a (B1): edge contact runs the facet's own valley geometry
         )
-        edge_contribs = _face_edge_contributions(geom, face_id, (valley_id,), str(row.get("label", face_id)), shake_measurements)
+        edge_contribs = _sv_edges
         components.append(_component(row, face_id, "single_valley", "derived", "fully_surfaced", "face, valley event, edges, and valley LF derived from parser/candidates", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
@@ -387,9 +486,18 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         valley_ids = tuple(str(v) for v in row.get("valley_ids", ()))
         for valley_id in valley_ids:
             _require_valley_borders_face(geom, valley_id, face_id)
-        valley_lf = sum(_claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed,
-                                              _boundary_valleys) for valley_id in valley_ids)
-        affected = _multi_valley_union_area(geom, face_id, valley_ids, confirmed_selection, include_child_penetrations=bool(row.get("include_child_penetrations", True)))
+        _claimed_before = set(valley_lf_claimed)   # FRAME ARC-06a (B1): see the single-valley loop
+        try:
+            valley_lf = sum(_claim_valley_lf_once(geom, valley_id, selected_valley_ids, valley_lf_claimed,
+                                                  _boundary_valleys) for valley_id in valley_ids)
+            affected = _multi_valley_union_area(geom, face_id, valley_ids, confirmed_selection, include_child_penetrations=bool(row.get("include_child_penetrations", True)))
+            _gp = _facet_geometry_profile(face_id, confirmed_selection)
+            _mv_edges = _face_edge_contributions(geom, face_id, valley_ids, str(row.get("label", face_id)), _gp)
+        except NotImplementedError as _e:
+            valley_lf_claimed.clear(); valley_lf_claimed.update(_claimed_before)
+            _unsupported.append(_unsupported_record(geom, face_id, "multi_valley", "VALLEY " + ", ".join(valley_ids),
+                                                    confirmed_selection, _e, "PACKAGE_REFUSED"))
+            continue
         iface = build_m1_interface_for_face(
             geom,
             face_id,
@@ -402,8 +510,9 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             high_slope_user_flag=(str(face_id) in _high_slope),
             extra_edges=_system_boundary_edges(geom, face_id, valley_ids, _boundary_valleys,
                                                _valley_pairs, confirmed_selection, shake_measurements),
+            geometry_profile=_gp,   # FRAME ARC-06a (B1)
         )
-        edge_contribs = _face_edge_contributions(geom, face_id, valley_ids, str(row.get("label", face_id)), shake_measurements)
+        edge_contribs = _mv_edges
         components.append(_component(row, face_id, "multi_valley", "derived", "fully_surfaced", "multi-valley union, edges, and non-duplicated selected valley LF derived from parser/candidates", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
@@ -480,7 +589,13 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         # differs between the two operations; the material line below is identical for both.
         _carves = appurtenance_carves(row)
         _replaced_ids = {str(_as_mapping(_it)["face_id"]) for _it in confirmed_selection.get("replaced_facets", ())}
-        affected = _appurtenance_union_affected_area(geom, host_face_id, candidate, confirmed_selection, _carves, _replaced_ids, _rfacets)
+        try:   # FRAME ARC-06a (B1): its net area is deduped against the host's repair zone, which the package may refuse
+            affected = _appurtenance_union_affected_area(geom, host_face_id, candidate, confirmed_selection, _carves, _replaced_ids, _rfacets)
+        except NotImplementedError as _e:
+            _unsupported.append(_unsupported_record(geom, host_face_id, "penetration_appurtenance",
+                                                    f"APPURTENANCE {penetration_id} (deduped against a refused repair "
+                                                    f"zone on its host)", confirmed_selection, _e, "PACKAGE_REFUSED"))
+            continue
         appurt_candidate = _with_appurtenance_label(candidate, str(row.get("kind_label", "CHIMNEY")), str(row.get("group", penetration_id)), row.get("contacted"), row.get("size_class"), carves=_carves, other_label=row.get("other_label"), other_category=row.get("other_category"),
             operation=(row.get("operation") or row.get("skylight_operation") or row.get("power_vent_operation")),
             host_replaced=str(host_face_id) in _replaced_ids,
@@ -518,7 +633,14 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         # depends on where the marker came from.
         _carves = appurtenance_carves(row)
         _replaced_ids = {str(_as_mapping(_it)["face_id"]) for _it in confirmed_selection.get("replaced_facets", ())}
-        affected = _appurtenance_union_affected_area(geom, host_face_id, candidate, confirmed_selection, _carves, _replaced_ids, _rfacets)
+        try:   # FRAME ARC-06a (B1): see the XML-detected appurtenance loop above
+            affected = _appurtenance_union_affected_area(geom, host_face_id, candidate, confirmed_selection, _carves, _replaced_ids, _rfacets)
+        except NotImplementedError as _e:
+            _unsupported.append(_unsupported_record(geom, host_face_id, "user_appurtenance",
+                                                    f"APPURTENANCE {row.get('designator') or row.get('label') or 'user'} "
+                                                    f"(deduped against a refused repair zone on its host)",
+                                                    confirmed_selection, _e, "PACKAGE_REFUSED"))
+            continue
         appurt_candidate = _with_appurtenance_label(candidate, str(row.get("kind_label", "OTHER")), str(row.get("designator") or row.get("label") or "user"), row.get("contacted"), row.get("size_class"), carves=_carves, other_label=row.get("other_label"), other_category=row.get("other_category"),
             operation=(row.get("operation") or row.get("skylight_operation") or row.get("power_vent_operation")),
             host_replaced=str(host_face_id) in _replaced_ids)
@@ -543,7 +665,27 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         row = _as_mapping(item)
         member_face_ids = tuple(str(v) for v in row["member_face_ids"])
         candidate = _require_notch_candidate(notch_candidates, member_face_ids)
-        iface, edge_contribs = _build_m1_interface_for_notch(geom, candidate, selected_valley_ids, valley_lf_claimed, str(row.get("label", "+".join(member_face_ids))), confirmed_selection=confirmed_selection, override_valley_ids=row.get("valley_ids"), shake_measurements=shake_measurements, boundary_valleys=_boundary_valleys)
+        # FRAME ARC-06a (B1): a merge spanning materials is never computed with either side's geometry — it is a
+        # SYSTEM_BOUNDARY receipt; one material, its own profile; a package refusal, a PACKAGE_REFUSED receipt.
+        _nid = "+".join(member_face_ids)
+        _claimed_before = set(valley_lf_claimed)
+        try:
+            _gp = _geometry_profile_for_facets(member_face_ids, confirmed_selection, shake_measurements,
+                                              f"module2_assembly: the notch merge {_nid}")
+        except Exception as _e:
+            from project_config import ProjectConfigError as _PCE   # call time, as _component imports it
+            if not isinstance(_e, (_RegistryWiringError, _PCE)):
+                raise
+            _unsupported.append(_unsupported_record(geom, _nid, "notch", "NOTCH MERGE " + _nid,
+                                                    confirmed_selection, _e, "SYSTEM_BOUNDARY"))
+            continue
+        try:
+            iface, edge_contribs = _build_m1_interface_for_notch(geom, candidate, selected_valley_ids, valley_lf_claimed, str(row.get("label", _nid)), confirmed_selection=confirmed_selection, override_valley_ids=row.get("valley_ids"), shake_measurements=shake_measurements, boundary_valleys=_boundary_valleys, geometry_profile=_gp)
+        except NotImplementedError as _e:
+            valley_lf_claimed.clear(); valley_lf_claimed.update(_claimed_before)
+            _unsupported.append(_unsupported_record(geom, _nid, "notch", "NOTCH VALLEY " + _nid,
+                                                    confirmed_selection, _e, "PACKAGE_REFUSED"))
+            continue
         components.append(_component(row, "+".join(member_face_ids), "notch", "derived", "fully_surfaced", "merged facet, notch polygon, RIDGE anchor, VALLEY events, and edges derived from notch candidate", iface, edge_contribs, confirmed_selection=confirmed_selection))
         breakdown.append(_breakdown(components[-1]))
 
@@ -582,12 +724,13 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         # `area_with - area_without`, so if the two carves used different clearances the appurtenance zones
         # would not cancel and the band would absorb the difference as if it were band.
         _facet_sys = system_for_facet(face_id, confirmed_selection)
+        _band_gp = _facet_geometry_profile(face_id, confirmed_selection)   # FRAME ARC-06a: the facet's own profile
         _p0, area_without = affected_area(
             engine_face.facet, [], appurtenances=apps, penetrations=pens,
-            shake_measurements=shake_measurements, facet_system_id=_facet_sys)
+            shake_measurements=_band_gp, facet_system_id=_facet_sys)
         _p1, area_with = affected_area(
             engine_face.facet, [], appurtenances=apps, penetrations=pens,
-            shake_measurements=shake_measurements, transition_bands=engine_bands(bands),
+            shake_measurements=_band_gp, transition_bands=engine_bands(bands),
             facet_system_id=_facet_sys)
         net_area = max(0.0, float(area_with) - float(area_without))   # incremental, union-correct
 
@@ -652,7 +795,7 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         valley_ids = [str(v) for v in (confirmed_selection.get("selected_valley_ids", ()) or ())]
         transitions_for_scope = [
             Transition(
-                contact_LF=transition_contact_lf(geom, t, valley_ids),
+                contact_LF=transition_contact_lf(geom, t, valley_ids, confirmed_selection),   # ARC-06a: per facet
                 edge_total_LF=float(t.edge_total_LF),
                 selected=t.edge_id in selected_ids,
                 metal=metal_facts.get(str(t.edge_id)),               # None = never answered
@@ -672,14 +815,14 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
             _trans_groups.setdefault(_sys, []).append(tr)
         transition_scope_lines = tuple(
             l for _sys, _trs in _trans_groups.items()
-            for l in roof_system(_sys).expand_scope(M1Interface(transitions=_trs, **_iface_profile(shake_measurements)),
+            for l in roof_system(_sys).expand_scope(M1Interface(transitions=_trs, measured_profile=shake_measurements),
                                                     repair_factor=1.0))
         # v93: which of these transitions actually BILL flashing — asked of the same emission authority, one
         # transition at a time, so a transition answered NONE / MEMBRANE (no flashing line) casts no vote.
         _flash_edges = [
             t for t, tr, _sys in zip(active_transitions, transitions_for_scope, _trans_sys)
             if any(l.category_id == "TRANSITION_FLASH" for l in roof_system(_sys).expand_scope(
-                M1Interface(transitions=[tr], **_iface_profile(shake_measurements)), repair_factor=1.0))]
+                M1Interface(transitions=[tr], measured_profile=shake_measurements), repair_factor=1.0))]
     else:
         _flash_edges = []
 
@@ -727,20 +870,50 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
     # stays 29) so it folds into the IWS comparison total — exactly the Devore 537.16-vs-119.85 gap.
     eave_iws_lines: List[ScopeLine] = []
     eave_iws_meta = None
+    _held: List[HeldOperation] = []
     if _eave_iws_basis:
-        _eave_lf = round(sum(c.contact_LF for c in deduped_edge_contribs
-                             if c.edge_type == "EAVE" and c.contact_LF > 0), 2)
-        if _eave_lf > 0:
-            _cov, _layers, _defaulted = eave_iws_coverage(_eave_lf, _soffit_depth)
-            eave_iws_lines.append(ScopeLine("Ice & water barrier (eaves)", "IWS", _cov, "SF",
-                                            "CONFIRM", _eave_iws_citation(_eave_iws_basis)))
-            eave_iws_meta = {
-                "eave_LF": _eave_lf, "coverage_SF": _cov, "layers": _layers,
-                "code": bool(_eave_iws_basis.get("code")),
-                "existing": bool(_eave_iws_basis.get("existing")),
-                "soffit_depth_in": (None if _defaulted else float(_soffit_depth)),
-                "citation": _eave_iws_citation(_eave_iws_basis),
-            }
+        # FRAME ARC-06a (E): PER-EDGE OWNERSHIP. Every eave belongs to exactly ONE facet (eaves are per-facet perimeter
+        # edges, never shared — see the threading note at the top of this function) and every deduped contribution is
+        # stamped with that facet's roof system (v105.3). So the eave LF is grouped BY THE SYSTEM THAT OWNS THE EAVE,
+        # and each group is answered by ITS OWN package's `roof_eave_ice_and_water` operation. A system whose package
+        # declares no such operation (MODBIT) is NOT billed with another package's rule: its eaves are HELD for an
+        # owner ruling (HeldOperation), and the claim is unresolved until then. With one system this is the same one
+        # group, the same LF (same contributions, same order, same rounding) and the same single line as before.
+        _eave_groups: Dict[str, List[EdgeContribution]] = {}
+        for c in deduped_edge_contribs:
+            if c.edge_type == "EAVE" and c.contact_LF > 0:
+                _eave_groups.setdefault(str(c.system_id or ""), []).append(c)
+        _billed_meta = []
+        for _esys, _ecs in _eave_groups.items():
+            _eave_lf = round(sum(c.contact_LF for c in _ecs), 2)
+            if _eave_lf <= 0:
+                continue
+            if _esys and declares_operation(_esys, "roof_eave_ice_and_water"):
+                _eave_op = require_operation(_esys, "roof_eave_ice_and_water")
+                _cov, _layers, _defaulted, _eave_cite = _eave_op(_eave_lf, _soffit_depth, _eave_iws_basis)
+                eave_iws_lines.append(ScopeLine("Ice & water barrier (eaves)", "IWS", _cov, "SF",
+                                                "CONFIRM", _eave_cite))
+                _billed_meta.append({
+                    "eave_LF": _eave_lf, "coverage_SF": _cov, "layers": _layers,
+                    "code": bool(_eave_iws_basis.get("code")),
+                    "existing": bool(_eave_iws_basis.get("existing")),
+                    "soffit_depth_in": (None if _defaulted else float(_soffit_depth)),
+                    "citation": _eave_cite,
+                })
+            else:
+                _held.append(HeldOperation(
+                    operation="roof_eave_ice_and_water", system_id=_esys or "(unattributed)",
+                    basis=(("eave_LF", float(_eave_lf)),),
+                    edge_ids=tuple(sorted({str(c.line_id) for c in _ecs}, key=_id_sort_key)),
+                    reason=(f"eave ice & water was asserted for this claim, but these {_eave_lf} LF of eave belong to "
+                            f"facets covered by {_esys or 'an unattributed system'!r}, whose roof-system package "
+                            f"declares no eave ice & water rule. Another covering's rule is never borrowed. "
+                            f"Owner decision needed (ARC-06a Q-E1): what eave underlayment treatment, if any, this "
+                            f"covering requires. Nothing was billed for these eaves.")))
+        if len(_billed_meta) == 1:
+            eave_iws_meta = _billed_meta[0]
+        elif _billed_meta:   # two declaring packages, each billing ITS OWN eaves (not reachable with today's packages)
+            eave_iws_meta = {**_billed_meta[0], "by_system": tuple(_billed_meta)}
     aggregated = _aggregate_lines([*non_edge_lines, *edge_scope_lines, *transition_scope_lines, *eave_iws_lines])
     aggregated_by_structure = _aggregate_by_structure(geom, components, confirmed_selection, active_transitions)
     _facet_counts: MutableMapping[str, int] = {}
@@ -829,6 +1002,8 @@ def assemble_full_roof_scope(xml_text: str, confirmed_selection: Mapping[str, ob
         eave_iws=eave_iws_meta,
         two_facet_operations=tuple(two_facet_votes),
         system_boundary_disclosures=tuple(_boundary_disclosures),
+        unsupported_operations=tuple(_unsupported),   # FRAME ARC-06a (B1)
+        held_operations=tuple(_held),                  # FRAME ARC-06a (E)
     )
 
 
@@ -851,6 +1026,12 @@ def _two_facet_operation(pair, replaced) -> Optional[str]:
 def _component(row: Mapping[str, object], face_id: str, component_type: str, geometry_status: str, surface_status: str, reason: str, iface: M1Interface, edge_contribs: Sequence[EdgeContribution], *, confirmed_selection: Mapping[str, object]) -> ComponentAssembly:
     # FRAME v104b: the component's own facet decides its scope engine (v104a's system_for_facet). A notch's face_id is its
     # members joined ('F21+F22'), which no exception can name, so it takes the predominant / sole system.
+    if PROJECT_CONFIG_KEY in (confirmed_selection or {}):
+        # FRAME ARC-03a: the opaque material handoff, from THE one resolver — the same call that decides the engine
+        # below. Legacy selections leave it None, so their interfaces are exactly what they were.
+        from project_config import material_profile_for_facet
+        iface = replace(iface, material_profile=material_profile_for_facet(face_id,
+                                                                           confirmed_selection[PROJECT_CONFIG_KEY]))
     lines = tuple(roof_system(system_for_facet(face_id, confirmed_selection)).expand_scope(iface, repair_factor=1.0))
     # The steep line leaves expand_scope with no tier on it, so three tiers would merge into one.
     # Stamp the component's own tier here — the single place every component's lines are produced.
@@ -1148,7 +1329,7 @@ def _encoding_b_reframed_area(geom: EagleViewGeometry, b_cand: Candidate, valley
 
 
 def _single_valley_area(geom: EagleViewGeometry, face_id: str, valley_id: str, confirmed_selection: Mapping[str, object]) -> float:
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection)
+    shake_measurements = _facet_geometry_profile(face_id, confirmed_selection)   # FRAME ARC-06a (B1): the facet's own
     b_cand = _encoding_b_candidate(geom, face_id)
     if b_cand is not None and not _transition_bands_for(confirmed_selection, face_id):
         # ENCODING B (v65): self-bounding HIDDEN line (slit around a lobe). Reframe the valley sweep so
@@ -1163,7 +1344,7 @@ def _single_valley_area(geom: EagleViewGeometry, face_id: str, valley_id: str, c
 
 
 def _multi_valley_union_area(geom: EagleViewGeometry, face_id: str, valley_ids: Sequence[str], confirmed_selection: Mapping[str, object], include_child_penetrations: bool = True) -> float:
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection)
+    shake_measurements = _facet_geometry_profile(face_id, confirmed_selection)   # FRAME ARC-06a (B1): the facet's own
     b_cand = _encoding_b_candidate(geom, face_id)
     if b_cand is not None and not _transition_bands_for(confirmed_selection, face_id):
         return _encoding_b_reframed_area(geom, b_cand, list(valley_ids), confirmed_selection, shake_measurements)
@@ -1223,15 +1404,18 @@ def encoding_b_zone(geom: EagleViewGeometry, face_id: str, valley_ids, confirmed
     return float(affected), zone, gx, gy, facet
 
 
-def _build_m1_interface_for_notch(geom: EagleViewGeometry, candidate: Candidate, selected_valley_ids: Sequence[str], claimed: set[str], label: str, confirmed_selection: Mapping[str, object] | None = None, override_valley_ids=None, shake_measurements=None, boundary_valleys: frozenset = frozenset()) -> Tuple[M1Interface, Tuple[EdgeContribution, ...]]:
+def _build_m1_interface_for_notch(geom: EagleViewGeometry, candidate: Candidate, selected_valley_ids: Sequence[str], claimed: set[str], label: str, confirmed_selection: Mapping[str, object] | None = None, override_valley_ids=None, shake_measurements=None, boundary_valleys: frozenset = frozenset(), geometry_profile=None) -> Tuple[M1Interface, Tuple[EdgeContribution, ...]]:
+    # FRAME ARC-06a (B1): the GEOMETRY runs with the merged members' own profile (geometry_profile); the interface
+    # keeps the claim-level profile for the scope (measured_profile), exactly as before. None = the old single profile.
+    _geo = shake_measurements if geometry_profile is None else geometry_profile
     frame, facet, notches, valley_ids, valley_events, pens = _notch_reframe_geometry(geom, candidate, confirmed_selection, override_valley_ids=override_valley_ids)
-    _per_event, affected = affected_area(facet, valley_events, notches=notches, penetrations=pens, shake_measurements=shake_measurements)
+    _per_event, affected = affected_area(facet, valley_events, notches=notches, penetrations=pens, shake_measurements=_geo)
     edge_tuples_with_ids = _notch_outer_edge_tuples_with_ids(geom, candidate, frame)
     edge_tuples = [(a, b, edge_type, total_lf) for _line_id, a, b, edge_type, total_lf in edge_tuples_with_ids]
-    edges, edge_contribs = _surface_physical_edges(facet, valley_events, edge_tuples_with_ids, label, shake_measurements)
+    edges, edge_contribs = _surface_physical_edges(facet, valley_events, edge_tuples_with_ids, label, _geo)
     valley_lf = sum(_claim_valley_lf_once(geom, valley_id, selected_valley_ids, claimed, boundary_valleys)
                     for valley_id in valley_ids)
-    return M1Interface(affected_SF=float(affected), valley_LF_in_scope=float(valley_lf), edges=edges, appurts=[], transitions=[], shake_width_in=float((shake_measurements or {}).get("width_in", 7.0)), exposure_in=float((shake_measurements or {}).get("exposure_in", 10.0)), length_in=float((shake_measurements or {}).get("length_in", 24.0))), tuple(edge_contribs)
+    return M1Interface(affected_SF=float(affected), valley_LF_in_scope=float(valley_lf), edges=edges, appurts=[], transitions=[], measured_profile=shake_measurements), tuple(edge_contribs)
 
 
 def _notch_outer_edge_tuples_with_ids(geom: EagleViewGeometry, candidate: Candidate, frame) -> List[Tuple[str, Tuple[float, float], Tuple[float, float], str, float]]:
@@ -1398,7 +1582,7 @@ def _appurtenance_union_affected_area(geom, host_face_id, candidate, confirmed_s
 
 
 def _appurtenance_net_affected_area(geom: EagleViewGeometry, host_face_id: str, candidate: Candidate, confirmed_selection: Mapping[str, object]):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection)
+    shake_measurements = _facet_geometry_profile(host_face_id, confirmed_selection)   # FRAME ARC-06a (B1)
     merged_candidate = _merged_candidate_for_member_face(geom, host_face_id)
     if merged_candidate is not None:
         return _merged_appurtenance_net_affected_area(geom, merged_candidate, candidate, confirmed_selection)
@@ -1439,7 +1623,8 @@ def _appurtenance_net_affected_area(geom: EagleViewGeometry, host_face_id: str, 
 
 
 def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candidate: Candidate, appurtenance_candidate: Candidate, confirmed_selection: Mapping[str, object]):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection)
+    shake_measurements = _members_geometry_profile(notch_candidate.params["member_face_ids"], confirmed_selection,
+                                                   "an appurtenance carve on a merged slope")   # FRAME ARC-06a (B1)
     anchor_line = geom.lines[str(notch_candidate.params["anchor_line_id"])]
     frame_ids = tuple(str(pid) for pid in notch_candidate.params["frame_point_ids"])
     frame = mkframe_pts(
@@ -1490,7 +1675,7 @@ def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candid
     return float(net_zone.sum() * cell), net_zone, gx, gy, "+".join(str(v) for v in notch_candidate.params["member_face_ids"])
 
 def _appurtenance_affected_area(geom: EagleViewGeometry, host_face_id: str, candidate: Candidate, confirmed_selection: Mapping[str, object] | None = None):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection or {})
+    shake_measurements = _facet_geometry_profile(host_face_id, confirmed_selection or {})   # FRAME ARC-06a (B1)
     merged_candidate = _merged_candidate_for_member_face(geom, host_face_id)
     if merged_candidate is not None:
         return _merged_appurtenance_affected_area(geom, merged_candidate, candidate, confirmed_selection or {})
@@ -1516,7 +1701,8 @@ def _merged_candidate_for_member_face(geom: EagleViewGeometry, face_id: str) -> 
 
 
 def _merged_appurtenance_affected_area(geom: EagleViewGeometry, notch_candidate: Candidate, appurtenance_candidate: Candidate, confirmed_selection: Mapping[str, object] | None = None):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection or {})
+    shake_measurements = _members_geometry_profile(notch_candidate.params["member_face_ids"], confirmed_selection,
+                                                   "an appurtenance carve on a merged slope")   # FRAME ARC-06a (B1)
     anchor_line = geom.lines[str(notch_candidate.params["anchor_line_id"])]
     frame_ids = tuple(str(pid) for pid in notch_candidate.params["frame_point_ids"])
     frame = mkframe_pts(
@@ -1847,7 +2033,7 @@ def _aggregate_by_structure(geom: EagleViewGeometry, components, confirmed_selec
             trans_sys_by_structure.setdefault(sid, []).append(system_for_facets(
                 (t.face_a_id, t.face_b_id), confirmed_selection, f"module2_assembly: the per-structure transition {t.edge_id}"))
             trans_by_structure.setdefault(sid, []).append(Transition(
-                contact_LF=transition_contact_lf(geom, t, valley_ids),
+                contact_LF=transition_contact_lf(geom, t, valley_ids, confirmed_selection),   # ARC-06a: per facet
                 edge_total_LF=float(t.edge_total_LF),
                 selected=t.edge_id in selected_ids,
                 metal=metal_facts.get(str(t.edge_id)),
@@ -1881,7 +2067,7 @@ def _aggregate_by_structure(geom: EagleViewGeometry, components, confirmed_selec
         for _sys, tr in zip(trans_sys_by_structure.get(sid, ()), trans_by_structure.get(sid, ())):
             _groups.setdefault(_sys, []).append(tr)
         trans_lines = tuple(l for _sys, _trs in _groups.items()
-                            for l in roof_system(_sys).expand_scope(M1Interface(transitions=_trs, **_iface_profile(_profile)),
+                            for l in roof_system(_sys).expand_scope(M1Interface(transitions=_trs, measured_profile=_profile),
                                                                     repair_factor=1.0))
         out.append((sid, tuple(_aggregate_lines([*non_edge, *edge_lines, *trans_lines]))))
     return tuple(out)
@@ -2026,6 +2212,18 @@ def field_quantities_by_system(result):
         if line.category_id == field_category_id(sysid):
             by_system.setdefault(sysid, {}).setdefault(str(line.unit), []).append(line.qty)
     return {sysid: _field_unit_order(by_system[sysid]) for sysid in sorted(by_system)}
+
+
+def field_by_system_display(result):
+    """FRAME ARC-06a r1: field_quantities_by_system's answer for a DISPLAY surface — [{system_id, label, figures}], each
+    system's own figures under its own field category's display label (category_display_names: package content for a
+    package id). For page 2's tile when a scope carries field covering from two or more systems (e.g. a MODBIT
+    replacement whose tie-in bills wood-shake field on the shake side), where field_summary RAISES by design (v104d):
+    nothing is summed and nothing is picked — the systems are shown side by side. Systems in sorted id order."""
+    from category_display_names import category_display_name   # function-local: display vocabulary, read at call time
+    return [{"system_id": sid, "label": str(category_display_name(field_category_id(sid)) or sid),
+             "figures": [[float(q), str(u)] for q, u in figs]}
+            for sid, figs in field_quantities_by_system(result).items()]
 
 
 def field_quantities(result):

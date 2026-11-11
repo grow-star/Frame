@@ -334,6 +334,17 @@
     .field .help { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
     .profile-warning { display:none; margin-top: 12px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--warn-border); background: var(--warn-bg); color: #665015; font-size: 13px; line-height: 1.4; }
     .profile-warning.visible { display:block; }
+    /* FRAME ARC-03a: project declaration */
+    .hidden { display: none !important; }
+    .preset-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+    .provenance-badge { font-size: 12px; font-weight: 800; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+    .provenance-badge[data-provenance="USER_SELECTED_PRESET"] { border-color: var(--warn-border); background: var(--warn-bg); color: #665015; }
+    .provenance-badge[data-provenance="USER_MEASURED"] { border-color: #9cc9a6; background: #eef8f0; color: #205a2e; }
+    .extra-systems, .structure-assign { margin-top: 12px; font-size: 13px; }
+    .extra-systems label { display: inline-flex; gap: 6px; align-items: center; margin-right: 14px; font-weight: 700; }
+    .structure-assign table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    .structure-assign td, .structure-assign th { text-align: left; padding: 6px 4px; border-top: 1px solid var(--line); }
+    .structure-assign select { border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; font: inherit; background: white; }
 
     code {
       padding: 2px 5px;
@@ -389,37 +400,24 @@
           </label>
 
 
-          <section class="shake-profile" aria-label="Shake field measurements">
-            <h2>Shake measurements</h2>
-            <p class="profile-note">Enter field-measured dimensions when available. Defaults are labeled default — not field-measured and are used only when the roof has not been measured.</p>
+          <!-- FRAME ARC-03a: THE PROJECT IS DECLARED HERE, explicitly. The roof-system list comes from the installed
+               engine registry (bridge: materialProfileCatalog), never a browser catalog; nothing is preselected,
+               and a system's profile questions appear only once the user has chosen that system. -->
+          <section class="shake-profile project-setup" id="projectSetup" aria-label="Project and roof system">
+            <h2>Project and roof system</h2>
+            <p class="profile-note">Declare what this roof is before anything is computed. Nothing is assumed: an undeclared roof cannot be scoped.</p>
             <div class="profile-grid">
               <div class="field">
-                <label for="shakeWidth">Average width (in)</label>
-                <input id="shakeWidth" type="number" min="3" max="14" step="0.1" value="7" />
-                <p class="help">Typical 6–8 in; valid range 3–14 in. This one width drives count and stagger.</p>
-              </div>
-              <div class="field">
-                <label for="shakeExposure">Exposure (in)</label>
-                <input id="shakeExposure" type="number" min="1" max="12" step="0.1" value="10" />
-                <p class="help">Measure butt-to-butt. Code max: 24 in → 10; 18 in/thin → 7.5.</p>
-              </div>
-              <div class="field">
-                <label for="shakeLength">Length</label>
-                <select id="shakeLength">
-                  <option value="24" selected>24 in</option>
-                  <option value="18">18 in</option>
+                <label for="jobObjective">Objective</label>
+                <select id="jobObjective">
+                  <option value="repair_analysis" selected>Repair analysis (carrier comparison optional)</option>
                 </select>
-                <p class="help">Used for exposure validation and report material description.</p>
+                <p class="help">Quick estimate and stand-alone carrier comparison are planned for a later version and are not available here.</p>
               </div>
               <div class="field">
-                <label for="shakeThickness">Thickness</label>
-                <select id="shakeThickness">
-                  <option value="3/4" selected>3/4 heavy</option>
-                  <option value="1/2">1/2 medium</option>
-                  <option value="1">1 jumbo</option>
-                  <option value="3/8">3/8 thin</option>
-                </select>
-                <p class="help">Thin 24 in shakes use the 7.5 in exposure cap.</p>
+                <label for="predominantSystem">Predominant roof system</label>
+                <select id="predominantSystem" disabled><option value="">Loading installed roof systems…</option></select>
+                <p class="help" id="predominantHelp">The roofing on most of this roof. Its profile questions appear once you choose.</p>
               </div>
               <div class="field">
                 <label for="soffitDepth">Soffit depth (in)</label>
@@ -427,8 +425,53 @@
                 <p class="help">Measured overhang depth. Sets the eave ice &amp; water coverage width and layer count. Leave blank if not measured.</p>
               </div>
             </div>
+            <div class="extra-systems" id="extraSystems" aria-label="Other roof systems on this roof"></div>
+            <div class="structure-assign" id="structureAssign" aria-label="Roof system by structure"></div>
+            <div class="profile-warning" id="projectWarning" role="alert"></div>
+          </section>
+
+          <section class="shake-profile system-profile hidden" data-profile-system="wood_shake" id="shakeProfileForm" aria-label="Shake field measurements">
+            <h2>Shake measurements</h2>
+            <p class="profile-note">Enter the field-measured dimensions, or select the labelled preset. Nothing is filled in for you, and values you type are recorded as field-measured.</p>
+            <div class="preset-row">
+              <button class="secondary visible" id="shakePresetButton" type="button" disabled>Use preset</button>
+              <span class="provenance-badge" id="shakeProvenance" data-provenance="NONE">Not entered yet</span>
+            </div>
+            <div class="profile-grid">
+              <div class="field">
+                <label for="shakeWidth">Average width (in)</label>
+                <input id="shakeWidth" type="number" min="3" max="14" step="0.1" value="" placeholder="measured width" />
+                <p class="help">Typical 6–8 in; valid range 3–14 in. This one width drives count and stagger.</p>
+              </div>
+              <div class="field">
+                <label for="shakeExposure">Exposure (in)</label>
+                <input id="shakeExposure" type="number" min="1" max="12" step="0.1" value="" placeholder="measured exposure" />
+                <p class="help">Measure butt-to-butt. Code max: 24 in → 10; 18 in/thin → 7.5.</p>
+              </div>
+              <div class="field">
+                <label for="shakeLength">Length</label>
+                <select id="shakeLength">
+                  <option value="" selected>— choose —</option>
+                  <option value="24">24 in</option>
+                  <option value="18">18 in</option>
+                </select>
+                <p class="help">Used for exposure validation and report material description.</p>
+              </div>
+              <div class="field">
+                <label for="shakeThickness">Thickness</label>
+                <select id="shakeThickness">
+                  <option value="" selected>— choose —</option>
+                  <option value="3/4">3/4 heavy</option>
+                  <option value="1/2">1/2 medium</option>
+                  <option value="1">1 jumbo</option>
+                  <option value="3/8">3/8 thin</option>
+                </select>
+                <p class="help">Thin 24 in shakes use the 7.5 in exposure cap.</p>
+              </div>
+            </div>
             <div class="profile-warning" id="profileWarning"></div>
           </section>
+          <div id="genericProfileForms"></div>
 
           <label class="drop-zone" id="estimateDrop" for="estimateInput" tabindex="0" role="button" aria-label="Upload optional carrier estimate">
             <input id="estimateInput" type="file" accept=".pdf,.txt,.xml,application/pdf,text/plain,text/xml" />
@@ -485,14 +528,26 @@
   </main>
 
   <script type="module">
-    import { ready, roofLayout } from './pyodide_bridge.js';
+    // FRAME ARC-03a: a NAMESPACE import, so a bridge build that lacks an export (an older stub) still loads this page and
+    // the missing capability is reported on screen instead of breaking the module.
+    import * as Bridge from './pyodide_bridge.js';
+
+    // FRAME ARC-03a r1 — FINISH A COMMITTED CLAIM LOAD BEFORE ANYTHING READS THE SESSION. A saved-claim load commits
+    // with one marker key and then settles; if settling could not finish, this page finishes it now — or stops,
+    // showing why — so it never reads a half-written claim (claim_codec.js settleOrStop). The codec is imported only
+    // while a load is pending, so an ordinary visit runs exactly as before.
+    if (sessionStorage.getItem('woodShakeWorkbench.claimLoadTxn') !== null) {
+      (await import('./claim_codec.js')).settleOrStop(sessionStorage, document);
+    }
+    const ready = Bridge.ready;
+    const roofLayout = Bridge.roofLayout;
+    const SESSION = 'woodShakeWorkbench.';
 
     const state = {
       xmlFile: null,
       estimateFile: null,
       xmlText: '',
       roofData: null,
-      shakeMeasurements: null,
       estimateText: '',            // Layer A: text layer of the uploaded carrier estimate ('' if a scan)
       restoredEstimate: null
     };
@@ -504,11 +559,108 @@
     const statusPanel = document.getElementById('statusPanel');
 
 
-    function currentShakeMeasurements() {
-      const width = Number(document.getElementById('shakeWidth').value);
-      const exposure = Number(document.getElementById('shakeExposure').value);
-      const length = Number(document.getElementById('shakeLength').value);
+    // ===================== FRAME ARC-03a — THE PROJECT DECLARATION =====================
+    // Page 1 builds ONE ProjectConfig header (schema_version 1; core/contracts/project_config.py is the schema and the
+    // validator) and stores it under woodShakeWorkbench.projectConfig. Nothing is preselected and nothing is filled in:
+    //   * the roof-system list is the INSTALLED registry's (Bridge.materialProfileCatalog), never a literal list;
+    //   * a system's profile questions appear only once that system is declared somewhere on this project;
+    //   * shake dimensions start blank; the package's preset is a visibly labelled CHOICE, recorded as
+    //     USER_SELECTED_PRESET, and any value the user types is recorded as USER_MEASURED;
+    //   * Continue asks THE Python validator (Bridge.validateProjectConfig) and refuses on any error.
+    const project = {
+      catalog: [],                 // [{system_id, label, profile: {settings, presets} | null}] FROM THE ENGINE
+      catalogError: '',
+      projectId: null,             // created ONCE (first Continue), then carried — never regenerated on navigation
+      predominant: '',             // system_id the user chose ('' = not chosen)
+      extras: new Set(),           // other systems the user declared for this roof (structures / page-2 exceptions)
+      structures: {},              // {structure_id: system_id} — only where it differs from the predominant
+      shakeProvenance: 'NONE',     // NONE | USER_SELECTED_PRESET | USER_MEASURED — set by WHAT THE USER DID
+      shakePresetId: null,
+      generic: {},                 // {system_id: {setting: value-as-chosen ('' = not chosen, '__null__' = null)}}
+      byFacet: {},                 // page-2 facet exceptions, carried back when page 1 is revisited (same roof)
+      fileName: null
+    };
+    const NULL_CHOICE = '__null__';
+
+    function catalogRow(systemId) { return project.catalog.find((r) => r.system_id === systemId) || null; }
+    function systemLabel(systemId) { const r = catalogRow(systemId); return (r && r.label) || String(systemId || ''); }
+    function profileIdFor(systemId) { return 'profile_' + String(systemId); }
+    function hasBespokeForm(systemId) { return !!document.querySelector('[data-profile-system="' + systemId + '"]'); }
+
+    function declaredSystems() {
+      const out = [];
+      const add = (sid) => { if (sid && !out.includes(sid)) out.push(sid); };
+      add(project.predominant);
+      Object.values(project.structures).forEach(add);
+      Array.from(project.extras).forEach(add);
+      return out;
+    }
+
+    async function loadCatalog() {
+      const sel = document.getElementById('predominantSystem');
+      try {
+        if (typeof Bridge.materialProfileCatalog !== 'function') throw new Error('this engine build cannot list its roof systems');
+        const rows = await Bridge.materialProfileCatalog();
+        project.catalog = (Array.isArray(rows) ? rows : []).filter((r) => r && r.system_id)
+          .map((r) => ({ system_id: String(r.system_id), label: String(r.label || r.system_id), profile: r.profile || null }));
+        if (!project.catalog.length) throw new Error('no roof system is installed');
+      } catch (e) {
+        project.catalog = [];
+        project.catalogError = 'The installed roof systems could not be loaded (' + (e && e.message ? e.message : e)
+          + '). A project cannot be declared, so nothing can be scoped. Refresh the page.';
+      }
+      sel.innerHTML = '';
+      const blank = document.createElement('option');
+      blank.value = ''; blank.textContent = project.catalog.length ? '— choose the roof system —' : 'Roof systems unavailable';
+      sel.appendChild(blank);
+      for (const r of project.catalog) {
+        const o = document.createElement('option');
+        o.value = r.system_id; o.textContent = r.label + (r.profile ? '' : ' (cannot be declared in this version)');
+        o.disabled = !r.profile;
+        sel.appendChild(o);
+      }
+      sel.disabled = !project.catalog.length;
+      sel.value = project.predominant && catalogRow(project.predominant) ? project.predominant : '';
+      renderProjectUi();
+    }
+
+    function shakePreset() {
+      const row = catalogRow('wood_shake');
+      const presets = (row && row.profile && row.profile.presets) || {};
+      const ids = Object.keys(presets);
+      return ids.length ? { id: ids[0], label: presets[ids[0]].label, settings: presets[ids[0]].settings } : null;
+    }
+
+    function setShakeProvenance(kind) {
+      project.shakeProvenance = kind;
+      const badge = document.getElementById('shakeProvenance');
+      badge.setAttribute('data-provenance', kind);
+      badge.textContent = kind === 'USER_SELECTED_PRESET' ? 'Preset selected — not field-measured'
+        : kind === 'USER_MEASURED' ? 'Entered by you — field-measured' : 'Not entered yet';
+    }
+
+    function applyShakePreset() {
+      const p = shakePreset();
+      if (!p) return;
+      document.getElementById('shakeWidth').value = p.settings.width_in;
+      document.getElementById('shakeExposure').value = p.settings.exposure_in;
+      document.getElementById('shakeLength').value = String(Number(p.settings.length_in));
+      document.getElementById('shakeThickness').value = String(p.settings.thickness);
+      project.shakePresetId = p.id;
+      setShakeProvenance('USER_SELECTED_PRESET');
+      refreshProfileWarning();
+    }
+
+    // The wood-shake form -> {settings, warnings} or throws a user-facing Error. Blank is an error, never a default.
+    function readShakeForm() {
+      const wRaw = document.getElementById('shakeWidth').value;
+      const eRaw = document.getElementById('shakeExposure').value;
+      const lRaw = document.getElementById('shakeLength').value;
       const thickness = document.getElementById('shakeThickness').value;
+      if (wRaw === '' || eRaw === '' || lRaw === '' || thickness === '') {
+        throw new Error('Enter the shake width, exposure, length and thickness, or select the preset.');
+      }
+      const width = Number(wRaw), exposure = Number(eRaw), length = Number(lRaw);
       const maxExposure = (length === 18 || thickness === '3/8') ? 7.5 : 10;
       const warnings = [];
       if (!Number.isFinite(width) || width <= 0) throw new Error('Shake width must be greater than 0.');
@@ -517,18 +669,247 @@
       if (!Number.isFinite(exposure) || exposure <= 0) throw new Error('Exposure must be greater than 0.');
       if (exposure > length / 2) throw new Error('Exposure exceeds the sane length/2 upper bound.');
       if (exposure > maxExposure) warnings.push('Exposure exceeds the code max for the selected length/thickness (' + maxExposure + ' in). Allowed with warning because field reality may differ; document it with photos.');
-      const soffitRaw = (document.getElementById('soffitDepth') || {}).value;
-      const soffit_depth_in = (soffitRaw === '' || soffitRaw == null || !Number.isFinite(Number(soffitRaw))) ? null : Number(soffitRaw);
-      return { width_in: width, exposure_in: exposure, length_in: length, thickness, measurement_source: 'default — not field-measured', exposure_over_code_max: exposure > maxExposure, code_max_exposure_in: maxExposure, warnings, soffit_depth_in };
+      return { settings: { width_in: width, exposure_in: exposure, length_in: length, thickness }, warnings };
     }
 
     function refreshProfileWarning() {
       const warning = document.getElementById('profileWarning');
+      const any = ['shakeWidth', 'shakeExposure', 'shakeLength', 'shakeThickness']
+        .some((id) => document.getElementById(id).value !== '');
+      if (!any) { warning.textContent = ''; warning.classList.remove('visible'); return; }
       try {
-        const profile = currentShakeMeasurements();
+        const profile = readShakeForm();
         if (profile.warnings.length) { warning.textContent = profile.warnings.join(' '); warning.classList.add('visible'); }
         else { warning.textContent = ''; warning.classList.remove('visible'); }
       } catch (error) { warning.textContent = error.message; warning.classList.add('visible'); }
+    }
+
+    function soffitDepthIn() {
+      const raw = (document.getElementById('soffitDepth') || {}).value;
+      return (raw === '' || raw == null || !Number.isFinite(Number(raw))) ? null : Number(raw);
+    }
+
+    // A generic form for a system whose page has no bespoke one: one control per setting the PACKAGE declares.
+    function renderGenericForms() {
+      const host = document.getElementById('genericProfileForms');
+      host.innerHTML = '';
+      for (const sid of declaredSystems()) {
+        if (hasBespokeForm(sid)) continue;
+        const row = catalogRow(sid);
+        const decl = row && row.profile;
+        const sec = document.createElement('section');
+        sec.className = 'shake-profile system-profile';
+        sec.setAttribute('data-generic-profile', sid);
+        const h = document.createElement('h2'); h.textContent = systemLabel(sid) + ' profile'; sec.appendChild(h);
+        if (!decl) {
+          const p = document.createElement('p'); p.className = 'profile-note';
+          p.textContent = 'This roof system declares no profile questions in this version, so it cannot be declared.';
+          sec.appendChild(p); host.appendChild(sec); continue;
+        }
+        const grid = document.createElement('div'); grid.className = 'profile-grid'; sec.appendChild(grid);
+        project.generic[sid] = project.generic[sid] || {};
+        for (const [name, spec] of Object.entries(decl.settings || {})) {
+          const f = document.createElement('div'); f.className = 'field';
+          const id = 'gp_' + sid + '_' + name;
+          const lab = document.createElement('label'); lab.setAttribute('for', id); lab.textContent = name.replace(/_/g, ' ');
+          f.appendChild(lab);
+          let ctl;
+          if (Array.isArray(spec.choices)) {
+            ctl = document.createElement('select');
+            const b = document.createElement('option'); b.value = ''; b.textContent = '— choose —'; ctl.appendChild(b);
+            if (spec.nullable) {
+              const n = document.createElement('option'); n.value = NULL_CHOICE; n.textContent = 'Not stated / unknown'; ctl.appendChild(n);
+            }
+            for (const c of spec.choices) {
+              const o = document.createElement('option'); o.value = String(c); o.textContent = String(c).replace(/_/g, ' ').toLowerCase(); ctl.appendChild(o);
+            }
+          } else {
+            ctl = document.createElement('input'); ctl.type = 'text';
+          }
+          ctl.id = id; ctl.setAttribute('data-setting', name);
+          ctl.value = project.generic[sid][name] != null ? project.generic[sid][name] : '';
+          ctl.addEventListener('change', () => { project.generic[sid][name] = ctl.value; });
+          ctl.addEventListener('input', () => { project.generic[sid][name] = ctl.value; });
+          f.appendChild(ctl);
+          const help = document.createElement('p'); help.className = 'help';
+          help.textContent = spec.nullable ? 'Choose a value, or "Not stated / unknown" — nothing is chosen for you.' : 'Required.';
+          f.appendChild(help);
+          grid.appendChild(f);
+        }
+        host.appendChild(sec);
+      }
+    }
+
+    function renderExtraSystems() {
+      const host = document.getElementById('extraSystems');
+      host.innerHTML = '';
+      const others = project.catalog.filter((r) => r.profile && r.system_id !== project.predominant);
+      if (!project.predominant || !others.length) return;
+      const t = document.createElement('div'); t.className = 'help';
+      t.textContent = 'Other roof systems on this roof (declare them here to assign structures or facets to them):';
+      host.appendChild(t);
+      for (const r of others) {
+        const lab = document.createElement('label');
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.setAttribute('data-extra-system', r.system_id);
+        cb.checked = project.extras.has(r.system_id) || Object.values(project.structures).includes(r.system_id);
+        cb.disabled = Object.values(project.structures).includes(r.system_id);
+        cb.addEventListener('change', () => { if (cb.checked) project.extras.add(r.system_id); else project.extras.delete(r.system_id); renderProjectUi(); });
+        lab.appendChild(cb); lab.appendChild(document.createTextNode(r.label));
+        host.appendChild(lab);
+      }
+    }
+
+    function roofStructures() {
+      const out = new Map();
+      for (const f of ((state.roofData && state.roofData.facets) || [])) {
+        const sid = String(f.structure_id || '');
+        if (!sid) continue;
+        out.set(sid, (out.get(sid) || 0) + 1);
+      }
+      return out;
+    }
+
+    // Per-structure assignment — shown once the XML has identified two or more <ROOF> structures.
+    function renderStructureAssign() {
+      const host = document.getElementById('structureAssign');
+      host.innerHTML = '';
+      const structures = roofStructures();
+      for (const k of Object.keys(project.structures)) if (!structures.has(k)) delete project.structures[k];
+      if (structures.size < 2 || !project.predominant) return;
+      const t = document.createElement('div'); t.className = 'help';
+      t.textContent = 'Roof system by structure (from the EagleView <ROOF> structures). Facet-level exceptions are set on page 2.';
+      host.appendChild(t);
+      const table = document.createElement('table');
+      for (const [sid, n] of Array.from(structures.entries()).sort()) {
+        const tr = document.createElement('tr');
+        const td1 = document.createElement('td'); td1.textContent = sid + ' · ' + n + ' facet' + (n === 1 ? '' : 's');
+        const td2 = document.createElement('td');
+        const sel = document.createElement('select'); sel.setAttribute('data-structure-id', sid);
+        const d = document.createElement('option'); d.value = ''; d.textContent = 'Project default — ' + systemLabel(project.predominant); sel.appendChild(d);
+        for (const r of project.catalog.filter((x) => x.profile && x.system_id !== project.predominant)) {
+          const o = document.createElement('option'); o.value = r.system_id; o.textContent = r.label; sel.appendChild(o);
+        }
+        sel.value = project.structures[sid] || '';
+        sel.addEventListener('change', () => {
+          if (sel.value) project.structures[sid] = sel.value; else delete project.structures[sid];
+          renderProjectUi();
+        });
+        td2.appendChild(sel); tr.appendChild(td1); tr.appendChild(td2); table.appendChild(tr);
+      }
+      host.appendChild(table);
+    }
+
+    function renderProjectUi() {
+      const warn = document.getElementById('projectWarning');
+      if (project.catalogError) { warn.textContent = project.catalogError; warn.classList.add('visible'); }
+      const systems = declaredSystems();
+      document.querySelectorAll('[data-profile-system]').forEach((el) => {
+        el.classList.toggle('hidden', !systems.includes(el.getAttribute('data-profile-system')));
+      });
+      const p = shakePreset();
+      const btn = document.getElementById('shakePresetButton');
+      btn.disabled = !p;
+      btn.textContent = p ? 'Use preset: ' + p.label : 'No preset available';
+      renderExtraSystems();
+      renderStructureAssign();
+      renderGenericForms();
+    }
+
+    async function sha256Hex(text) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function newProjectId() {
+      if (globalThis.crypto && typeof crypto.randomUUID === 'function') return 'prj-' + crypto.randomUUID();
+      const a = new Uint8Array(16); crypto.getRandomValues(a);
+      return 'prj-' + Array.from(a).map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function readStoredProjectConfig() {
+      try { const raw = sessionStorage.getItem(SESSION + 'projectConfig'); return raw ? JSON.parse(raw) : null; }
+      catch (_e) { return null; }
+    }
+
+    // -> the schema_version 1 header, or throws an Error naming exactly what is missing. Nothing is defaulted.
+    async function buildProjectConfig() {
+      if (!project.catalog.length) throw new Error(project.catalogError || 'The installed roof systems are not loaded yet.');
+      const objective = document.getElementById('jobObjective').value;
+      if (objective !== 'repair_analysis') throw new Error('Only repair analysis is available in this version.');
+      if (!project.predominant) throw new Error('Choose the predominant roof system first. Nothing is assumed.');
+      const profiles = {};
+      for (const sid of declaredSystems()) {
+        const row = catalogRow(sid);
+        if (!row || !row.profile) throw new Error(systemLabel(sid) + ' cannot be declared in this version.');
+        if (sid === 'wood_shake' && hasBespokeForm(sid)) {
+          const f = readShakeForm();
+          if (project.shakeProvenance === 'NONE') throw new Error('Enter the shake measurements, or select the preset.');
+          const prof = { system_id: sid, label: systemLabel(sid), settings: f.settings, measurement_source: project.shakeProvenance };
+          if (project.shakeProvenance === 'USER_SELECTED_PRESET') prof.preset_id = project.shakePresetId;
+          profiles[profileIdFor(sid)] = prof;
+        } else {
+          const chosen = project.generic[sid] || {};
+          const settings = {};
+          for (const name of Object.keys(row.profile.settings || {})) {
+            const v = chosen[name];
+            if (v == null || v === '') throw new Error('Answer "' + name.replace(/_/g, ' ') + '" for ' + systemLabel(sid) + ' (choose "Not stated / unknown" if it is not known).');
+            settings[name] = v === NULL_CHOICE ? null : v;
+          }
+          profiles[profileIdFor(sid)] = { system_id: sid, label: systemLabel(sid), settings, measurement_source: 'USER_DECLARED' };
+        }
+      }
+      const facets = (state.roofData && Array.isArray(state.roofData.facets)) ? state.roofData.facets : [];
+      if (!facets.length) throw new Error('Load the roof first.');
+      const facetStructures = {};
+      for (const f of facets) facetStructures[String(f.facet_id)] = String(f.structure_id || '');
+      const byStructure = {};
+      for (const [k, v] of Object.entries(project.structures)) if (v && v !== project.predominant) byStructure[k] = profileIdFor(v);
+      const byFacet = {};
+      const dropped = [];
+      for (const [fid, pid] of Object.entries(project.byFacet || {})) {
+        if (profiles[pid] && fid in facetStructures) byFacet[fid] = pid; else dropped.push(fid);
+      }
+      if (!project.projectId) project.projectId = newProjectId();
+      const header = {
+        schema_version: 1,
+        project_id: project.projectId,
+        job_objective: objective,
+        materials: { default: profileIdFor(project.predominant), by_structure: byStructure, by_facet: byFacet, profiles },
+        source: { kind: 'EAGLEVIEW_XML', record_id: 'sha256:' + await sha256Hex(state.xmlText),
+                  file_name: (state.xmlFile && state.xmlFile.name) || project.fileName || null,
+                  facet_structures: facetStructures }
+      };
+      return { header, dropped };
+    }
+
+    function restoreProjectFromConfig(cfg) {
+      if (!cfg || cfg.schema_version !== 1 || !cfg.materials) return;
+      project.projectId = cfg.project_id || null;
+      project.fileName = (cfg.source && cfg.source.file_name) || null;
+      const profiles = cfg.materials.profiles || {};
+      const sysOf = (pid) => (profiles[pid] && profiles[pid].system_id) || '';
+      project.predominant = sysOf(cfg.materials.default);
+      project.structures = {};
+      for (const [k, pid] of Object.entries(cfg.materials.by_structure || {})) project.structures[k] = sysOf(pid);
+      project.byFacet = Object.assign({}, cfg.materials.by_facet || {});
+      project.extras = new Set(Object.values(profiles).map((p) => p.system_id)
+        .filter((sid) => sid !== project.predominant && !Object.values(project.structures).includes(sid)));
+      for (const p of Object.values(profiles)) {
+        if (p.system_id === 'wood_shake') {
+          document.getElementById('shakeWidth').value = p.settings.width_in;
+          document.getElementById('shakeExposure').value = p.settings.exposure_in;
+          document.getElementById('shakeLength').value = String(Number(p.settings.length_in));
+          document.getElementById('shakeThickness').value = String(p.settings.thickness);
+          project.shakePresetId = p.preset_id || null;
+          setShakeProvenance(p.measurement_source);
+        } else {
+          project.generic[p.system_id] = {};
+          for (const [k, v] of Object.entries(p.settings || {})) project.generic[p.system_id][k] = v === null ? NULL_CHOICE : String(v);
+        }
+      }
+      document.getElementById('predominantSystem').value = project.predominant;
+      refreshProfileWarning();
+      renderProjectUi();
     }
 
     function setStatus(kind, title, message) {
@@ -570,9 +951,14 @@
         state.roofData = null;
         // A new/changed roof abandons any in-progress claim: clear all downstream + restore state
         // so nothing stale rehydrates on page 1, 2, or 3.
-        ['claimState', 'page2Selection', 'page2Restore', 'page2Payload', 'loadNotice'].forEach(function (k) {
+        ['claimState', 'page2Selection', 'page2Restore', 'page2Payload', 'loadNotice', 'projectConfig'].forEach(function (k) {
           sessionStorage.removeItem('woodShakeWorkbench.' + k);
         });
+        // ARC-03a: structure and facet assignments name the OLD roof's ids, so they go; the project id and the
+        // declared systems/profiles on screen stay (the same project, re-measured).
+        project.structures = {};
+        project.byFacet = {};
+        if (typeof renderProjectUi === 'function') renderProjectUi();
         state.restoredEstimate = null;
       } else {
         state.estimateFile = file;
@@ -714,10 +1100,9 @@
           throw new Error('The engine failed to load in the browser. Refresh and try again.');
         }
 
-        const shakeMeasurements = currentShakeMeasurements();
         const roofData = await loadRoof(xmlText);
         state.roofData = roofData;
-        state.shakeMeasurements = shakeMeasurements;
+        renderProjectUi();   // ARC-03a: the XML now identifies its structures
 
         const facetCount = Array.isArray(roofData.facets) ? roofData.facets.length : 0;
         const valleyCount = Array.isArray(roofData.valleys) ? roofData.valleys.length : 0;
@@ -778,14 +1163,42 @@
       assignFile('estimate', null);
     });
 
-    ['shakeWidth','shakeExposure','shakeLength','shakeThickness'].forEach(function (id) { document.getElementById(id).addEventListener('input', refreshProfileWarning); });
+    // ARC-03a: typing (or choosing) any shake value is a USER MEASUREMENT — the preset label does not survive an edit.
+    ['shakeWidth','shakeExposure','shakeLength','shakeThickness'].forEach(function (id) {
+      const el = document.getElementById(id);
+      const onEdit = function () { setShakeProvenance('USER_MEASURED'); project.shakePresetId = null; refreshProfileWarning(); };
+      el.addEventListener('input', onEdit);
+      if (el.tagName === 'SELECT') el.addEventListener('change', onEdit);
+    });
+    document.getElementById('shakePresetButton').addEventListener('click', applyShakePreset);
+    document.getElementById('predominantSystem').addEventListener('change', function (e) {
+      project.predominant = e.target.value || '';
+      project.extras.delete(project.predominant);
+      for (const k of Object.keys(project.structures)) if (project.structures[k] === project.predominant) delete project.structures[k];
+      renderProjectUi();
+    });
     refreshProfileWarning();
 
     nextButton.addEventListener('click', handleNext);
 
-    continueButton.addEventListener('click', function () {
+    continueButton.addEventListener('click', async function () {
       if (!state.xmlText || !state.roofData) {
         alert('Load the roof first.');
+        return;
+      }
+      // FRAME ARC-03a: the project must be DECLARED and must pass THE Python validator before anything is carried.
+      let built;
+      try { built = await buildProjectConfig(); }
+      catch (e) { setStatus('error', 'Declare the project first', e.message); return; }
+      try {
+        if (typeof Bridge.validateProjectConfig !== 'function') throw new Error('this engine build cannot validate a project');
+        const verdict = await Bridge.validateProjectConfig(state.xmlText, built.header, null);
+        if (!verdict || !verdict.ok) {
+          setStatus('error', 'The project declaration was refused', (verdict && verdict.error) || 'Unknown validation error.');
+          return;
+        }
+      } catch (e) {
+        setStatus('error', 'The project could not be validated', e && e.message ? e.message : String(e));
         return;
       }
 
@@ -793,6 +1206,7 @@
       sessionStorage.removeItem('woodShakeWorkbench.claimState');
       sessionStorage.removeItem('woodShakeWorkbench.page2Selection');
 
+      sessionStorage.setItem(SESSION + 'projectConfig', JSON.stringify(built.header));
       sessionStorage.setItem('woodShakeWorkbench.page2Payload', JSON.stringify({
         xmlText: state.xmlText,
         roofData: state.roofData,
@@ -800,7 +1214,8 @@
           ? { name: state.estimateFile.name, type: state.estimateFile.type, size: state.estimateFile.size }
           : (state.restoredEstimate || null),   // restored claim keeps its carrier-estimate flag (File can't be re-held)
         estimateText: state.estimateText || '', // Layer A input for page 3 ('' -> manual entry)
-        shakeMeasurements: state.shakeMeasurements || currentShakeMeasurements()
+        projectId: built.header.project_id,     // ARC-03a: binds this payload to the stored projectConfig
+        soffitDepthIn: soffitDepthIn()          // ARC-03a: a roof measurement, not a material profile
       }));
       window.location.href = './page2.html';
     });
@@ -816,23 +1231,42 @@
         payload = raw ? JSON.parse(raw) : null;
       } catch (_e) { payload = null; }
       // No in-progress claim -> page 1 behaves exactly as today (blank).
-      if (!payload || !payload.xmlText || !payload.roofData) return;
+      if (!payload || !payload.xmlText) return;
 
       state.xmlText = payload.xmlText;
       state.roofData = payload.roofData;
-      state.shakeMeasurements = payload.shakeMeasurements || null;
       state.restoredEstimate = payload.estimate || null;   // keep the carrier-estimate flag for Continue
       state.estimateText = payload.estimateText || '';     // keep the parsed estimate text too
-
-      const sm = payload.shakeMeasurements;
-      if (sm) {
-        if (Number.isFinite(sm.width_in)) document.getElementById('shakeWidth').value = sm.width_in;
-        if (Number.isFinite(sm.exposure_in)) document.getElementById('shakeExposure').value = sm.exposure_in;
-        if (sm.length_in != null) document.getElementById('shakeLength').value = String(sm.length_in);
-        if (sm.thickness != null) document.getElementById('shakeThickness').value = String(sm.thickness);
-        refreshProfileWarning();
+      // FRAME ARC-03a: the declaration comes back from the stored projectConfig (the one authority), only when it
+      // belongs to this payload. A pre-ARC-03a payload (no projectId) restores the roof but declares nothing.
+      const cfg = readStoredProjectConfig();
+      if (cfg && payload.projectId && cfg.project_id === payload.projectId) {
+        pendingProjectRestore = cfg;
+        if (payload.soffitDepthIn != null) document.getElementById('soffitDepth').value = payload.soffitDepthIn;
       }
 
+      if (!state.roofData) {
+        // FRAME ARC-03a r2 — THE ROOF LAYOUT IS DERIVED, NEVER IMPORTED. A session without one (a claim loaded by the
+        // codec alone writes none) rebuilds it from the restored XML through the same bridge call that built it the
+        // first time, before anything is shown; nothing is displayed from a layout the bridge did not build.
+        setStatus('loading', 'Restoring the roof…', 'Laying out the restored roof measurement…');
+        (async function () {
+          try { await checkHealth(); state.roofData = await loadRoof(state.xmlText); }
+          catch (_e) { state.roofData = null; }
+          if (!state.roofData || !Array.isArray(state.roofData.facets)) {
+            state.roofData = null;
+            setStatus('error', 'Roof could not be restored', 'The restored roof measurement could not be laid out. Choose the XML file again.');
+            return;
+          }
+          renderProjectUi();
+          showRestoredIntake();
+        })();
+        return;
+      }
+      showRestoredIntake();
+    }
+
+    function showRestoredIntake() {
       const facetCount = Array.isArray(state.roofData.facets) ? state.roofData.facets.length : 0;
       const valleyCount = Array.isArray(state.roofData.valleys) ? state.roofData.valleys.length : 0;
       const penetrationCount = Array.isArray(state.roofData.penetrations) ? state.roofData.penetrations.length : 0;
@@ -847,7 +1281,13 @@
       continueButton.classList.add('visible');
       updateNextState();
     }
+    let pendingProjectRestore = null;
     restoreIntakeOnLoad();
+    // ARC-03a: the installed systems come from the engine; a stored declaration is re-applied once they are known.
+    loadCatalog().then(function () {
+      if (pendingProjectRestore) restoreProjectFromConfig(pendingProjectRestore);
+      else { const cfg = readStoredProjectConfig(); if (cfg && !state.roofData) restoreProjectFromConfig(cfg); }
+    });
 
     // ===================== Report branding (per-device, NOT per-claim) =====================
     // The logo + "Prepared by" text live in localStorage under keys deliberately SEPARATE from the
@@ -1015,52 +1455,53 @@
     // message and the current claim is left exactly as it was - it never half-loads. Branding is NOT
     // read from the file (it stays the local device's localStorage), so a loaded claim shows THIS
     // company's logo, never the sender's.
-    const CLAIM_FILE_FORMAT = 'woodshake-claim';
-    const CLAIM_FILE_VERSION = 'v81';                 // MUST match the version constant in page4.html
-    const CLAIM_PREFIX = 'woodShakeWorkbench.';
-    const CLAIM_KEYS = ['claimState', 'page2Payload', 'page2Selection',
-                        'page2Restore', 'carrierConfirmation', 'reportEvidence'];
-
-    function parseClaimFile(text) {
-      let obj;
-      try { obj = JSON.parse(text); }
-      catch (_e) { throw new Error('This file could not be read as a claim (it is not valid JSON). Your current claim is unchanged.'); }
-      if (!obj || typeof obj !== 'object' || obj.format !== CLAIM_FILE_FORMAT
-          || !obj.state || typeof obj.state !== 'object') {
-        throw new Error('This is not a Wood Shake claim file. Your current claim is unchanged.');
-      }
-      if (!obj.state.claimState || typeof obj.state.claimState !== 'object'
-          || !obj.state.claimState.uiSelection) {
-        throw new Error('This claim file is incomplete or corrupt - the roof selection is missing. Your current claim is unchanged.');
-      }
-      return obj;
-    }
-
-    function applyClaimToSession(obj) {
-      // Atomic replace: clear the six claim keys, then write only those present in the file. Reached
-      // ONLY after parseClaimFile validated the whole file, so a bad file never gets this far.
-      CLAIM_KEYS.forEach(function (k) { sessionStorage.removeItem(CLAIM_PREFIX + k); });
-      CLAIM_KEYS.forEach(function (k) {
-        if (obj.state[k] !== undefined) sessionStorage.setItem(CLAIM_PREFIX + k, JSON.stringify(obj.state[k]));
-      });
-      const ev = obj.state.reportEvidence;
-      const pending = (ev && Array.isArray(ev.photos)) ? ev.photos.map(function (p) { return p.name || '(unnamed photo)'; }) : [];
-      sessionStorage.setItem(CLAIM_PREFIX + 'loadNotice', JSON.stringify({
-        fromVersion: obj.version || '(unknown)', runningVersion: CLAIM_FILE_VERSION,
-        versionMismatch: obj.version !== CLAIM_FILE_VERSION, photosPending: pending
-      }));
-    }
-
+    // FRAME ARC-03a: the format, the version and every rule of the file live in ONE codec (claim_codec.js), shared
+    // with page 4's Save. It is loaded on demand, so this page starts even where it is absent. LOAD ORDER, all of it
+    // before any write: (1) the codec checks the envelope and every browser-state copy (an old-format v81 claim file
+    // is refused here, by name); (2) THE Python validator checks the project and selection against the file's own XML;
+    // (3) the bridge lays out that XML and the codec checks the derived copies against it (ARC-03a r2); (4) only then
+    // is the session replaced, atomically. Any refusal leaves the current claim byte-identical.
     async function handleClaimFile(file) {
       const err = document.getElementById('claimError');
       err.classList.remove('visible'); err.textContent = '';
+      const refuse = (msg) => { err.textContent = msg; err.classList.add('visible'); };
       let text;
       try { text = await file.text(); }
-      catch (_e) { err.textContent = 'That file could not be read.'; err.classList.add('visible'); return; }
+      catch (_e) { refuse('That file could not be read. Your current claim is unchanged.'); return; }
+      let codec;
+      try { codec = await import('./claim_codec.js'); }
+      catch (_e) { refuse('The claim reader could not be loaded. Your current claim is unchanged.'); return; }
       let obj;
-      try { obj = parseClaimFile(text); }              // full validation BEFORE any write
-      catch (e) { err.textContent = e.message; err.classList.add('visible'); return; }
-      applyClaimToSession(obj);                          // only runs on a valid file
+      try { obj = codec.decodeClaimText(text); }                       // (1) the envelope
+      catch (e) { refuse(e.message); return; }
+      try {                                                            // (2) THE validator, on the file's own XML
+        if (typeof Bridge.validateProjectConfig !== 'function') throw new Error('this engine build cannot validate a claim');
+        const st = obj.state;
+        const verdict = await Bridge.validateProjectConfig(st.claimState.xmlText, codec.headerOf(st.projectConfig),
+                                                           st.projectConfig.selection);
+        if (!verdict || !verdict.ok) {
+          refuse('This claim file could not be opened: ' + ((verdict && verdict.error) || 'it failed validation')
+            + ' Your current claim is unchanged.');
+          return;
+        }
+      } catch (e) {
+        refuse('This claim file could not be validated (' + (e && e.message ? e.message : e) + '). Your current claim is unchanged.');
+        return;
+      }
+      try {                                                            // (3) the derived copies, on THIS roof (r2)
+        // The bridge lays out the file's own XML; the codec refuses a file whose saved layout is not that layout, or
+        // whose page-2 workbench names anything not on this roof or would rebuild a selection other than the
+        // confirmed one. The verified layout is the only roof layout the load writes.
+        if (typeof Bridge.roofLayout !== 'function') throw new Error('this engine build cannot lay out the roof');
+        const layout = await Bridge.roofLayout(obj.state.claimState.xmlText);
+        codec.verifyClaimLayout(obj, layout);
+      } catch (e) {
+        if (e instanceof codec.ClaimCodecError) { refuse(e.message); return; }
+        refuse('This claim file could not be checked against its roof (' + (e && e.message ? e.message : e) + '). Your current claim is unchanged.');
+        return;
+      }
+      try { codec.applyClaimToSession(sessionStorage, obj); }          // (4) atomic replace
+      catch (e) { refuse(e.message); return; }
       window.location.href = './page4.html';            // resume at the report; Back reaches pages 3 & 2
     }
 

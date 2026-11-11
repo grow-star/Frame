@@ -39,8 +39,11 @@ from appurtenance_types import size_suggests_mislabel as _size_suggests_mislabel
 from appurtenance_types import mislabel_citation as _mislabel_citation
 from wood_shake_geometry import three_course_extent_ft    # v90: the ONE transition tie-in extent authority (FRAME v95: package)
 from wood_shake_geometry import SYSTEM_ID as _SYSTEM_ID   # FRAME v104c: the engine stamps its own material on every line
-from scope_contract import (EXPOSURE_IN, SHAKE_WIDTH_IN,   # FRAME v100: the core contract (package imports core)
-                            CAP_THRESHOLD,                 # FRAME v106.5: THE ONE continuous-metal rule (was a copy here)
+# FRAME ARC-04a: the legacy wood-shake defaults are THIS package's (wood_shake_geometry's), no longer core's. Until
+# ARC-04a they were imported from core/contracts/scope_contract, which defined a second copy for M1Interface's defaults.
+from wood_shake_geometry import EXPOSURE_IN, SHAKE_WIDTH_IN
+from wood_shake_geometry import DEFAULT_SHAKE_MEASUREMENTS as _DEFAULT_SHAKE_MEASUREMENTS
+from scope_contract import (CAP_THRESHOLD,                 # FRAME v106.5: THE ONE continuous-metal rule (was a copy here)
                             METAL_EXPOSED, METAL_CONCEALED, METAL_NONE, METAL_MEMBRANE, METAL_UNKNOWN,
                             TRANSITION_METAL_VALUES, Edge, Appurt, Transition, M1Interface, ScopeLine)
 
@@ -177,6 +180,22 @@ def _eave_iws_citation(basis):
     return "Match-existing eave protection"
 
 
+# ---- FRAME ARC-04a: the interface's shake dimensions, resolved HERE ---------------------------
+def interface_profile(iface: M1Interface) -> dict:
+    """The width / exposure / length (inches, floats) this package scopes `iface` with — ALL THREE, never a subset.
+
+    The interface hands the claim's resolved measured profile through opaquely (M1Interface.measured_profile); this
+    package reads its own setting names from it. A setting the profile does not carry — or no profile at all — takes
+    this package's LEGACY default: 7 in width, 10 in exposure, 24 in length (wood_shake_geometry). That is exactly the
+    projection core made until ARC-04a, when M1Interface carried the three numbers as fields
+    (`float(profile.get("width_in", 7.0))` etc. at every constructor, and the same 7.0 / 10.0 / 24.0 as the dataclass
+    defaults), so every quantity is unchanged. It moved, it did not change."""
+    p = iface.measured_profile or {}
+    return {"width_in": float(p.get("width_in", SHAKE_WIDTH_IN)),
+            "exposure_in": float(p.get("exposure_in", EXPOSURE_IN)),
+            "length_in": float(p.get("length_in", _DEFAULT_SHAKE_MEASUREMENTS["length_in"]))}
+
+
 # ---- the engine --------------------------------------------------------------
 def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
     """Module 1 interface -> quantified Module 2 scope lines (Spec v1.2 §2).
@@ -188,6 +207,7 @@ def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
     """
     out = []
     sf = iface.affected_SF
+    _dims = interface_profile(iface)   # FRAME ARC-04a: the package resolves its own dimensions (were M1Interface fields)
 
     # --- SF-driven (§1) ---
     if sf > 0:
@@ -202,10 +222,10 @@ def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
                                  round(sf / 100.0, 4), "SQ", "AUTO", "CSSB wood-shake installation methodology"))
         else:
             out.append(ScopeLine("Wood shakes, hand split", "SHAKE_FIELD_RR",
-                                 _shake_count(sf, repair_factor, iface.shake_width_in, iface.exposure_in),
+                                 _shake_count(sf, repair_factor, _dims["width_in"], _dims["exposure_in"]),
                                  "EA", "AUTO", "CSSB wood-shake repair methodology"))  # v73 DEFECT 4: was "The repair" (said nothing); the same CSSB authority §3's reasoning invokes
         out.append(ScopeLine("30# felt", "FIELD_FELT",
-                             round(_felt_sq(sf, iface.exposure_in), 4), "SQ", "AUTO",
+                             round(_felt_sq(sf, _dims["exposure_in"]), 4), "SQ", "AUTO",
                              "CSSB interwoven underlayment"))
 
     # --- valley-LF-driven (§2/§4) ---
@@ -269,9 +289,9 @@ def expand_scope(iface: M1Interface, repair_factor: float = 1.0):
     # Quantity is edge_total_LF (geometric truth) either way.
     # v90: the underlayment runs up-slope to the TOP of the 3rd course (Joseph 2026-10-17), read from
     # THIS interface's own profile through the one shared authority — never a fixed 3 ft.
-    _tie_in_ft = (three_course_extent_ft({"width_in": iface.shake_width_in,
-                                          "exposure_in": iface.exposure_in,
-                                          "length_in": iface.length_in})
+    _tie_in_ft = (three_course_extent_ft({"width_in": _dims["width_in"],
+                                          "exposure_in": _dims["exposure_in"],
+                                          "length_in": _dims["length_in"]})
                   if iface.transitions else 0.0)
     for tr in iface.transitions:
         path_a = tr.edge_total_LF > 0 and tr.contact_LF >= CAP_THRESHOLD * tr.edge_total_LF

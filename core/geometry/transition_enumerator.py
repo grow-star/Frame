@@ -192,8 +192,15 @@ def transition_contact_readings(
     transition: TransitionCandidate,
     selected_valley_ids: Optional[Iterable[str]] = None,
     res: float = 0.04,
+    profile_for_face=None,
 ) -> List[Mapping[str, object]]:
-    """Soft-read contact on each side of a confirmed transition using frozen edge_contacts."""
+    """Soft-read contact on each side of a confirmed transition using frozen edge_contacts.
+
+    FRAME ARC-06a (B1): `profile_for_face(face_id)` -> the profile THAT facet's valley geometry runs with (the caller
+    resolves it through roof_systems.geometry_profile_for_facet). None = the old call (no profile: the claimant's),
+    byte-identical. A facet whose package REFUSES its valley geometry (NotImplementedError) contributes no contact —
+    a refused repair sweeps nothing — and the reading says so (`refused`); the refusal itself is receipted where the
+    repair is assembled (module2_assembly.UnsupportedOperation)."""
     selected = set(selected_valley_ids or [])
     readings: List[Mapping[str, object]] = []
     for face_id in (transition.face_a_id, transition.face_b_id):
@@ -212,9 +219,17 @@ def transition_contact_readings(
             if valley_id in face.line_ids and "VALLEY" in geom.lines[valley_id].type.upper():
                 valleys.append(geom.valley_event_for_face(face_id, valley_id))
         contact_lf = 0.0
+        refused = None
         if valleys:
-            contact = edge_contacts(engine_face.facet, valleys, edge, res=res)
-            contact_lf = float(contact["TRANSITION"][0])
+            try:
+                _fprof = None if profile_for_face is None else profile_for_face(face_id)
+                if _fprof is None:   # the pre-ARC-06a call, byte-identical
+                    contact = edge_contacts(engine_face.facet, valleys, edge, res=res)
+                else:
+                    contact = edge_contacts(engine_face.facet, valleys, edge, res=res, shake_measurements=_fprof)
+                contact_lf = float(contact["TRANSITION"][0])
+            except NotImplementedError as e:   # ARC-06a: the facet's own package refused the valley geometry
+                refused = str(e) or type(e).__name__
         readings.append({
             "edge_id": transition.edge_id,
             "face_id": face_id,
@@ -223,6 +238,7 @@ def transition_contact_readings(
             "edge_total_LF": transition.edge_total_LF,
             "contact_pct": (contact_lf / transition.edge_total_LF * 100.0) if transition.edge_total_LF else 0.0,
             "selected_valley_ids_used": sorted(v for v in selected if v in face.line_ids),
+            **({"refused": refused} if refused is not None else {}),   # ARC-06a: present only when refused
         })
     return readings
 

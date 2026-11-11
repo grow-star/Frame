@@ -28,6 +28,7 @@ import numpy as np
 
 # ONE AUTHORITY, shared with module2_assembly, for "does this appurtenance disturb the field?".
 from shared_category_registry import appurtenance_carves
+from shared_category_registry import field_category_ids   # FRAME ARC-04a: shake_EA by declared field covering, no literal
 from candidate_emitters import (
     emit_face_candidates,
     emit_penetration_candidates,
@@ -44,6 +45,10 @@ from roof_systems import get as roof_system, sole_registered_system, system_for_
 from roof_systems import system_for_facets   # FRAME v106.6c: a merged slope's system
 from roof_systems import appurtenance_clearance_for_facet   # FRAME v106.6c: the facet's own setback
 from roof_systems import appurtenance_clearance_for_facets   # FRAME v106.6c: a merged slope's setback
+from roof_systems import claim_geometry_profile as _claim_geometry_profile   # FRAME ARC-06a
+from roof_systems import geometry_profile_for_facet as _geometry_profile_for_facet   # FRAME ARC-06a (B1)
+from roof_systems import geometry_profile_for_facets as _geometry_profile_for_facets   # FRAME ARC-06a (B1)
+from roof_systems import RegistryWiringError as _RegistryWiringError   # FRAME ARC-06a: a cross-material merge
 from notch_candidate_emitter import emit_notch_candidates
 
 
@@ -71,16 +76,36 @@ affected_area = _engine.affected_area
 mkframe_pts = _engine.mkframe_pts
 appurtenance_zone_geometry = _engine.appurtenance_zone_geometry   # FRAME v102: the TYPE decides the zone
 appurtenance_zone_holes = _engine.appurtenance_zone_holes         # FRAME v103: a point zone is not carved by its own hole
-import wood_shake_geometry  # noqa: F401  FRAME v105.4: imported ONLY to register the package (A11) — no function is
-                            # imported; the profile's own package resolves it through the registry (system_for_profile)
-import modbit_geometry  # noqa: F401  FRAME v106.4: the SECOND package, imported ONLY to register it, by the same
-                        # rule — no function is imported from it either. A package added later is its files plus an
-                        # import line here and one in the bridge's boot helper; nothing else in this module changes.
+# FRAME ARC-05a: the installed roof-system packages are registered through the application's ONE composition root
+# (package isolation exception E1 retired). Until ARC-05a this module imported both packages' geometry modules here,
+# only to register them (A11); install_roof_systems() registers exactly those two, in that order, and names no package
+# in this module. A package added later changes installed_packages.py and the bridge's file list — not this module.
+import installed_packages as _installed_packages
+_installed_packages.install_roof_systems()
 
 
 def _shake_measurements_from_selection(confirmed_selection: Mapping[str, object]) -> Mapping[str, object]:
-    raw = confirmed_selection.get("shake_measurements") or confirmed_selection.get("shake_profile") or {}
-    return system_for_profile(raw).resolve_profile(raw)
+    # FRAME ARC-06a: the ONE claim-level profile read is roof_systems.claim_geometry_profile (identical logic). This
+    # helper and the two below are byte-identical in module1_service.py and module2_assembly.py (appurtenance A8b).
+    return _claim_geometry_profile(confirmed_selection)
+
+
+def _facet_geometry_profile(face_id, confirmed_selection) -> Mapping[str, object]:
+    """FRAME ARC-06a (B1): the profile the GEOMETRY of `face_id`'s repair events runs with — the facet's own package
+    and profile (roof_systems.geometry_profile_for_facet). The claim-level profile when the facet's system is the
+    claim profile's system (every single-system claim: unchanged); otherwise the facet's own. The SCOPE side
+    (M1Interface.measured_profile) is untouched: it keeps the claim-level profile exactly as before. One registry
+    function for both the diagram and the scope, so the diagram draws exactly what the scope computes."""
+    return _geometry_profile_for_facet(face_id, confirmed_selection or {},
+                                       _shake_measurements_from_selection(confirmed_selection or {}))
+
+
+def _members_geometry_profile(member_face_ids, confirmed_selection, context) -> Mapping[str, object]:
+    """FRAME ARC-06a (B1): the ONE profile a union across several facets (a merged slope) runs with. The members must
+    carry one roof system (system_for_facets raises RegistryWiringError on a SYSTEM BOUNDARY) and, in a project, one
+    profile; a union across materials is never computed with either side's geometry."""
+    return _geometry_profile_for_facets([str(m) for m in member_face_ids], confirmed_selection or {},
+                                        _shake_measurements_from_selection(confirmed_selection or {}), context)
 
 
 @dataclass(frozen=True)
@@ -103,6 +128,10 @@ class Module1ComponentResult:
     gx: object = None        # local grid x
     gy: object = None        # local grid y
     face_id: object = None   # for facet local->shared transform in the diagram
+    # FRAME ARC-06a (B1): set when the facet's own package REFUSED this event (or a merge spans materials). The
+    # component is a placeholder that keeps the diagram's positional pairing; it has no zone and no area, and the
+    # diagram lists it as an unsupported event instead of drawing it. None for every computed component.
+    unsupported_reason: object = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +204,15 @@ def _filter_subshake_components(mask, gx, gy, threshold_sf: float = _ONE_SHAKE_S
                     out[cr, cc] = True
     return out
 
+def _refused_component(label, face_id, exc) -> "Module1ComponentResult":
+    """FRAME ARC-06a (B1): the placeholder for an event the facet's own package refused (or a merge across materials):
+    no zone, no area, the refusal's own words. It keeps the diagram's positional pairing with the selection."""
+    return Module1ComponentResult(label=str(label), affected_SF_raw=0.0, geometry_status="refused",
+                                  source="the facet's own roof-system package refused this event",
+                                  zone=None, gx=None, gy=None, face_id=face_id,
+                                  unsupported_reason=str(exc) or type(exc).__name__)
+
+
 def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]) -> Module1ServiceResult:
     package = build_candidate_package(xml_text)
     geom = package.geom
@@ -197,13 +235,17 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
         _require_bordering_face(cand, face_id)
         facet_geom = geom.engine_facet(face_id)
         penetrations = _penetrations_with_user_footprints(geom, confirmed_selection, face_id)  # XML + confirmed user dimensioned footprint holes
-        per_event, _area, _zone, _gx, _gy = affected_area(
-            facet_geom.facet,
-            [geom.valley_event_for_face(face_id, valley_id)],
-            penetrations=penetrations,
-            return_zone=True,
-            shake_measurements=_shake_measurements_from_selection(confirmed_selection),
-        )
+        try:   # FRAME ARC-06a (B1): the facet's own package; a refusal is a placeholder, never a borrowed fan
+            per_event, _area, _zone, _gx, _gy = affected_area(
+                facet_geom.facet,
+                [geom.valley_event_for_face(face_id, valley_id)],
+                penetrations=penetrations,
+                return_zone=True,
+                shake_measurements=_facet_geometry_profile(face_id, confirmed_selection),
+            )
+        except NotImplementedError as _e:
+            components.append(_refused_component(str(row.get("label", f"{face_id}:{valley_id}")), face_id, _e))
+            continue
         components.append(Module1ComponentResult(
             label=str(row.get("label", f"{face_id}:{valley_id}")),
             affected_SF_raw=float(per_event[0]),
@@ -225,13 +267,17 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
             cand = _require_candidate(valley_candidates, valley_id, "valley")
             _require_bordering_face(cand, face_id)
         facet_geom = geom.engine_facet(face_id)
-        _per_event, area, _zone, _gx, _gy = affected_area(
-            facet_geom.facet,
-            [geom.valley_event_for_face(face_id, valley_id) for valley_id in valley_ids],
-            penetrations=_penetrations_with_user_footprints(geom, confirmed_selection, face_id),  # XML + confirmed user dimensioned footprint holes
-            return_zone=True,
-            shake_measurements=_shake_measurements_from_selection(confirmed_selection),
-        )
+        try:   # FRAME ARC-06a (B1)
+            _per_event, area, _zone, _gx, _gy = affected_area(
+                facet_geom.facet,
+                [geom.valley_event_for_face(face_id, valley_id) for valley_id in valley_ids],
+                penetrations=_penetrations_with_user_footprints(geom, confirmed_selection, face_id),  # XML + confirmed user dimensioned footprint holes
+                return_zone=True,
+                shake_measurements=_facet_geometry_profile(face_id, confirmed_selection),
+            )
+        except NotImplementedError as _e:
+            components.append(_refused_component(str(row.get("label", f"{face_id}:multi-valley")), face_id, _e))
+            continue
         components.append(Module1ComponentResult(
             label=str(row.get("label", f"{face_id}:multi-valley")),
             affected_SF_raw=float(area),
@@ -265,12 +311,17 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
         # and the v56 transition-band bug was exactly two zone derivations drifting apart. A
         # cover-only power vent produces an EMPTY zone here, so the diagram shades nothing and its
         # totals stay equal to the scope's by construction.
-        if not appurtenance_carves(row):
-            area, _zone, _gx, _gy, _zone_face_id = 0.0, None, None, None, host_face_id
-        elif host_face_id in _repair_facet_ids:
-            area, _zone, _gx, _gy, _zone_face_id = _appurtenance_net_affected_area(geom, host_face_id, cand, confirmed_selection)
-        else:
-            area, _zone, _gx, _gy, _zone_face_id = _appurtenance_affected_area(geom, host_face_id, cand, confirmed_selection)
+        try:   # FRAME ARC-06a (B1): its net zone is deduped against the host's repair zone, which may be refused
+            if not appurtenance_carves(row):
+                area, _zone, _gx, _gy, _zone_face_id = 0.0, None, None, None, host_face_id
+            elif host_face_id in _repair_facet_ids:
+                area, _zone, _gx, _gy, _zone_face_id = _appurtenance_net_affected_area(geom, host_face_id, cand, confirmed_selection)
+            else:
+                area, _zone, _gx, _gy, _zone_face_id = _appurtenance_affected_area(geom, host_face_id, cand, confirmed_selection)
+        except NotImplementedError as _e:
+            components.append(_refused_component(str(row.get("label", f"{host_face_id}:{penetration_id}:appurtenance")),
+                                                 host_face_id, _e))
+            continue
         components.append(Module1ComponentResult(
             label=str(row.get("label", f"{host_face_id}:{penetration_id}:appurtenance")),
             affected_SF_raw=float(area),
@@ -290,11 +341,15 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
             continue
         host_face_id = str(row["host_facet_id"])
         cand = _user_appurtenance_candidate_from_row(row, confirmed_selection)
-        if host_face_id in _repair_facet_ids:
-            area, _zone, _gx, _gy, _zone_face_id = _appurtenance_net_affected_area(geom, host_face_id, cand, confirmed_selection)
-        else:
-            area, _zone, _gx, _gy, _zone_face_id = _appurtenance_affected_area(geom, host_face_id, cand, confirmed_selection)
         label = str(row.get("designator") or row.get("label") or f"{host_face_id}:user-appurtenance")
+        try:   # FRAME ARC-06a (B1)
+            if host_face_id in _repair_facet_ids:
+                area, _zone, _gx, _gy, _zone_face_id = _appurtenance_net_affected_area(geom, host_face_id, cand, confirmed_selection)
+            else:
+                area, _zone, _gx, _gy, _zone_face_id = _appurtenance_affected_area(geom, host_face_id, cand, confirmed_selection)
+        except NotImplementedError as _e:
+            components.append(_refused_component(label, host_face_id, _e))
+            continue
         components.append(Module1ComponentResult(
             label=label,
             affected_SF_raw=float(area),
@@ -312,7 +367,15 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
         row = _confirmed_mapping(item)
         member_face_ids = tuple(str(v) for v in row["member_face_ids"])
         cand = _require_notch_candidate(notch_candidates, member_face_ids)
-        area, _zone, _gx, _gy = _derived_notch_union_area(geom, cand, confirmed_selection, override_valley_ids=row.get("valley_ids"))
+        try:   # FRAME ARC-06a (B1): one material's own profile; a cross-material merge or a refusal is a placeholder
+            area, _zone, _gx, _gy = _derived_notch_union_area(geom, cand, confirmed_selection, override_valley_ids=row.get("valley_ids"))
+        except Exception as _e:
+            from project_config import ProjectConfigError as _PCE
+            if not isinstance(_e, (NotImplementedError, _RegistryWiringError, _PCE)):
+                raise
+            components.append(_refused_component(str(row.get("label", ":".join(member_face_ids) + ":notch")),
+                                                 "+".join(member_face_ids), _e))
+            continue
         components.append(Module1ComponentResult(
             label=str(row.get("label", ":".join(member_face_ids) + ":notch")),
             affected_SF_raw=float(area),
@@ -332,6 +395,8 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
 
     scope_lines = []
     for component in components:
+        if component.unsupported_reason is not None:
+            continue   # FRAME ARC-06a (B1): a refused event's placeholder bills nothing
         _sid = (system_for_facet(component.face_id, confirmed_selection) if component.face_id
                 else sole_registered_system("module1_service: a component with no facet"))
         scope_lines.extend(roof_system(_sid).expand_scope(M1Interface(affected_SF=component.affected_SF_raw), repair_factor=1.0))
@@ -340,7 +405,13 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
 
     raw_total = sum(component.affected_SF_raw for component in components)
     display_total = round(sum(round(component.affected_SF_raw, 1) for component in components), 1)
-    shake_ea = sum(line.qty for line in scope_lines if line.category_id == "SHAKE_FIELD_RR")
+    # FRAME ARC-04a: no material literal. shake_EA is the PIECE COUNT of the field covering: the quantity of every line
+    # whose category a registered package DECLARED as its field covering (register_package_categories(field_category=))
+    # and that is billed by the piece ("EA"). Until ARC-04a this read the literal "SHAKE_FIELD_RR". Equal on every
+    # input: wood shake's field line is the only field line Module 1 emits in EA (a membrane's field covering is billed
+    # in SQ), and Module 1 never builds a replacement interface, so no shake field line here is ever SQ.
+    _field_ids = field_category_ids()
+    shake_ea = sum(line.qty for line in scope_lines if line.category_id in _field_ids and line.unit == "EA")
 
     return Module1ServiceResult(
         candidate_package=package,
@@ -358,7 +429,7 @@ def run_module1_service(xml_text: str, confirmed_selection: Mapping[str, object]
 
 
 def _appurtenance_net_affected_area(geom: EagleViewGeometry, host_face_id: str, candidate: Candidate, confirmed_selection: Mapping[str, object]):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection)
+    shake_measurements = _facet_geometry_profile(host_face_id, confirmed_selection)   # FRAME ARC-06a (B1)
     merged_candidate = _merged_candidate_for_member_face(geom, host_face_id)
     if merged_candidate is not None:
         return _merged_appurtenance_net_affected_area(geom, merged_candidate, candidate, confirmed_selection)
@@ -399,7 +470,8 @@ def _appurtenance_net_affected_area(geom: EagleViewGeometry, host_face_id: str, 
 
 
 def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candidate: Candidate, appurtenance_candidate: Candidate, confirmed_selection: Mapping[str, object]):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection)
+    shake_measurements = _members_geometry_profile(notch_candidate.params["member_face_ids"], confirmed_selection,
+                                                   "an appurtenance carve on a merged slope")   # FRAME ARC-06a (B1)
     anchor_line = geom.lines[str(notch_candidate.params["anchor_line_id"])]
     frame_ids = tuple(str(pid) for pid in notch_candidate.params["frame_point_ids"])
     frame = mkframe_pts(
@@ -450,7 +522,7 @@ def _merged_appurtenance_net_affected_area(geom: EagleViewGeometry, notch_candid
     return float(net_zone.sum() * cell), net_zone, gx, gy, "+".join(str(v) for v in notch_candidate.params["member_face_ids"])
 
 def _appurtenance_affected_area(geom: EagleViewGeometry, host_face_id: str, candidate: Candidate, confirmed_selection: Mapping[str, object] | None = None):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection or {})
+    shake_measurements = _facet_geometry_profile(host_face_id, confirmed_selection or {})   # FRAME ARC-06a (B1)
     merged_candidate = _merged_candidate_for_member_face(geom, host_face_id)
     if merged_candidate is not None:
         return _merged_appurtenance_affected_area(geom, merged_candidate, candidate, confirmed_selection or {})
@@ -476,7 +548,8 @@ def _merged_candidate_for_member_face(geom: EagleViewGeometry, face_id: str) -> 
 
 
 def _merged_appurtenance_affected_area(geom: EagleViewGeometry, notch_candidate: Candidate, appurtenance_candidate: Candidate, confirmed_selection: Mapping[str, object] | None = None):
-    shake_measurements = _shake_measurements_from_selection(confirmed_selection or {})
+    shake_measurements = _members_geometry_profile(notch_candidate.params["member_face_ids"], confirmed_selection,
+                                                   "an appurtenance carve on a merged slope")   # FRAME ARC-06a (B1)
     anchor_line = geom.lines[str(notch_candidate.params["anchor_line_id"])]
     frame_ids = tuple(str(pid) for pid in notch_candidate.params["frame_point_ids"])
     frame = mkframe_pts(
@@ -709,7 +782,9 @@ def _derived_notch_union_area(geom: EagleViewGeometry, candidate: Candidate, con
             if _pf is not None and getattr(_pf, "size", 0) > 0:
                 _notch_pens.append([tuple(frame(geom.points[pid])) for pid in geom.ordered_face_point_ids(_cid)])
     _notch_pens.extend(_user_footprints_for_merged_members(geom, confirmed_selection or {}, candidate.params["member_face_ids"], frame))
-    _per_event, area, _zone, _gx, _gy = affected_area(facet, valleys, notches=notches, penetrations=_dimensional_pens(_notch_pens), return_zone=True, shake_measurements=_shake_measurements_from_selection(confirmed_selection or {}))
+    _gp = _members_geometry_profile(candidate.params["member_face_ids"], confirmed_selection,
+                                    "the diagram's notch merge")   # FRAME ARC-06a (B1)
+    _per_event, area, _zone, _gx, _gy = affected_area(facet, valleys, notches=notches, penetrations=_dimensional_pens(_notch_pens), return_zone=True, shake_measurements=_gp)
     return float(area), _zone, _gx, _gy
 
 
